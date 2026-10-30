@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Impersonator Workstation v3.5 Master</title>
+    <style>
+        :root {
+            --bg-dark: #0a0813;
+            --panel-dark: #131125;
+            --accent-purple: #7c4dff;
+            --accent-glow: rgba(124, 77, 255, 0.4);
+            --text-main: #f1eeff;
+            --text-muted: #8b86a3;
+            --border-color: #262243;
+            --neon-green: #00e676;
+            --neon-red: #ff1744;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .studio-container {
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .studio-header {
+            text-align: center;
+            border-bottom: 3px solid var(--accent-purple);
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+        }
+
+        .studio-header h1 {
+            margin: 0;
+            font-size: 1.8rem;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px var(--accent-purple);
+        }
+
+        .studio-header p {
+            color: var(--text-muted);
+            margin: 5px 0 0 0;
+            font-size: 0.9rem;
+        }
+
+        .studio-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .studio-grid { grid-template-columns: 1fr; }
+        }
+
+        .studio-panel {
+            background-color: var(--panel-dark);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .studio-panel:hover {
+            border-color: var(--accent-purple);
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        .studio-panel.full-width {
+            grid-column: 1 / -1;
+        }
+
+        h3 {
+            color: var(--text-main);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 8px;
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 1rem;
+        }
+
+        label {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 5px;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        .slider-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .slider-value {
+            color: var(--accent-purple);
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        select, input[type="text"] {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px;
+            width: 100%;
+            margin-top: 5px;
+            box-sizing: border-box;
+            font-size: 0.9rem;
+        }
+
+        select:focus {
+            border-color: var(--accent-purple);
+            outline: none;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: var(--border-color);
+            height: 6px;
+            border-radius: 3px;
+            outline: none;
+            margin: 10px 0;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--accent-purple);
+            cursor: pointer;
+            box-shadow: 0 0 8px var(--accent-purple);
+        }
+
+        button {
+            background: linear-gradient(135deg, var(--accent-purple), #512da8);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 12px 20px;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 0.85rem;
+            transition: transform 0.1s ease, box-shadow 0.2s ease, opacity 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            box-shadow: 0 0 15px var(--accent-purple);
+            transform: translateY(-1px);
+        }
+
+        button:active:not(:disabled) { transform: translateY(1px); }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-danger { background: linear-gradient(135deg, var(--neon-red), #b71c1c); }
+        .btn-secondary { background: linear-gradient(135deg, #37474f, #263238); }
+
+        .status-matrix {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            border: 1px solid var(--neon-red);
+            color: var(--neon-red);
+            background: rgba(255, 23, 68, 0.1);
+        }
+
+        .status-matrix.live {
+            border-color: var(--neon-green);
+            color: var(--neon-green);
+            background: rgba(0, 230, 118, 0.1);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            accent-color: var(--accent-purple);
+            width: 16px;
+            height: 16px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="studio-container">
+    <div class="studio-header">
+        <h1>Super Impersonator Workstation</h1>
+        <p>MATRIX: STANDBY • MONITOR-FEED: MUTED • APP ENGINE: APPLIO INTEROP</p>
+    </div>
+
+    <div class="studio-panel full-width">
+        <h3>06 / Studio Preset Matrix</h3>
+        <div class="control-group">
+            <label for="studio-preset-select">Studio-Profile laden:</label>
+            <select id="studio-preset-select">
+                <option value="clear-vocals">Clear Studio Vocals (Default)</option>
+                <option value="radio-podcast">Radio Podcast Master (Heavy Gate & Low Punch)</option>
+                <option value="big-hall">Big Hall Ambience (Deep Reverb Space)</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="studio-grid">
+        <div class="studio-panel">
+            <h3>01 / Voice Input & Presets</h3>
+            <div class="control-group">
+                <label for="rvc-model-select">RVC Modell (.pth):</label>
+                <select id="rvc-model-select"><option value="">Lade Modell-Bibliothek...</option></select>
+            </div>
+            <div class="control-group">
+                <label for="rvc-index-select">Zugehörige Inferenz-Indexdatei (.index):</label>
+                <select id="rvc-index-select"><option value="">Kein Index ausgewählt</option></select>
+            </div>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="pitch-shift-slider">Vocal Pitch (RVC Core):</label>
+                    <span class="slider-value" id="val-pitch">0 ST</span>
+                </div>
+                <input type="range" id="pitch-shift-slider" min="-12" max="12" value="0">
+            </div>
+        </div>
+
+        <div class="studio-panel">
+            <h3>07 & 08 / Live Interop & Sidechain</h3>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <button id="btn-live-toggle" onclick="toggleStudioLiveMode()">🌐 Live-Modus Schalten</button>
+                <div id="live-indicator" class="status-matrix">🔴 OFFLINE</div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <button id="btn-mute-toggle" class="btn-secondary" onclick="toggleStudioMute()" style="width: 100%;">🎤 Mikrofon Aktiv</button>
+            </div>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="ducking-depth-slider">Ducking Depth (Dämpfung):</label>
+                    <span class="slider-value" id="val-ducking">60 %</span>
+                </div>
+                <input type="range" id="ducking-depth-slider" min="0" max="100" value="60">
+            </div>
+            <div class="checkbox-group">
+                <input type="checkbox" id="chk-feedback-killer" checked onchange="updateLiveInferenceParameters()">
+                <label for="chk-feedback-killer">Feedback Killer (Anti-Notch) aktiv</label>
+            </div>
+        </div>
+
+        <div class="studio-panel">
+            <h3>01.A & 01.B / Studio Dynamics & EQ</h3>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="gate-threshold-slider">Gate Threshold:</label>
+                    <span class="slider-value" id="val-gate-th">-45 dB</span>
+                </div>
+                <input type="range" id="gate-threshold-slider" min="-70" max="-10" value="-45">
+            </div>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="gate-release-slider">Gate Release:</label>
+                    <span class="slider-value" id="val-gate-rel">150 ms</span>
+                </div>
+                <input type="range" id="gate-release-slider" min="50" max="500" value="150">
+            </div>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="eq-low-slider">Low Shelf (100 Hz):</label>
+                    <span class="slider-value" id="val-eq-low">0 dB</span>
+                </div>
+                <input type="range" id="eq-low-slider" min="-12" max="12" value="0">
+            </div>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="eq-mid-slider">Mid Peak (2.5 kHz):</label>
+                    <span class="slider-value" id="val-eq-mid">0 dB</span>
+                </div>
+                <input type="range" id="eq-mid-slider" min="-12" max="12" value="0">
+            </div>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="eq-high-slider">High Shelf (10 kHz):</label>
+                    <span class="slider-value" id="val-eq-high">0 dB</span>
+                </div>
+                <input type="range" id="eq-high-slider" min="-12" max="12" value="0">
+            </div>
+        </div>
+
+        <div class="studio-panel">
+            <h3>01.C / Time & Ambience FX</h3>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="echo-time-slider">Echo Delay Time:</label>
+                    <span class="slider-value" id="val-echo-time">0.30 s</span>
+                </div>
+                <input type="range" id="echo-time-slider" min="0.05" max="1.0" step="0.05" value="0.3">
+            </div>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="echo-feedback-slider">Echo Feedback:</label>
+                    <span class="slider-value" id="val-echo-fb">30 %</span>
+                </div>
+                <input type="range" id="echo-feedback-slider" min="0" max="90" value="30">
+            </div>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="reverb-size-slider">Reverb Size:</label>
+                    <span class="slider-value" id="val-reverb">0.50</span>
+                </div>
+                <input type="range" id="reverb-size-slider" min="0.1" max="0.95" step="0.05" value="0.5">
+            </div>
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="fx-mix-slider">FX Wet/Dry Mix:</label>
+                    <span class="slider-value" id="val-fx-mix">25 %</span>
+                </div>
+                <input type="range" id="fx-mix-slider" min="0" max="100" value="25">
+            </div>
+        </div>
+    </div>
+
+    <div class="studio-panel full-width">
+        <h3>04 / Visual Signal Analysis (VU-Meter)</h3>
+        <label>DSP MASTER OUT (Echtzeit-Bus):</label>
+        <canvas id="dsp-vu-canvas" width="800" height="24" style="border-radius: 4px; display: block; margin-top: 5px; width: 100%;"></canvas>
+    </div>
+
+    <div class="studio-panel full-width">
+        <h3>03 & 05 / Recording & Master Export</h3>
+        <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
+            <button class="btn-danger" id="btn-rec-start" onclick="startStudioRecording()">🔴 Rec Start</button>
+            <button class="btn-secondary" id="btn-rec-stop" onclick="stopStudioRecording()" disabled>⏹️ Stop</button>
+            <span id="rec-status" style="color: var(--text-muted); font-size: 0.9rem;">Studio-Aufnahme im Leerlauf</span>
+        </div>
+        <div class="control-group">
+            <label for="master-codec-select">Ziel-Codec für Master-Bounce:</label>
+            <select id="master-codec-select">
+                <option value="wav">WAV (Unkomprimiert, 24-Bit Linear PCM)</option>
+                <option value="mp3">MP3 (320 kbit/s Constant Bitrate CBR)</option>
+                <option value="flac">FLAC (Lossless Audio Compression)</option>
+                <option value="wma">WMA (Windows Media Advanced Audio)</option>
+            </select>
+        </div>
+        <button id="btn-bounce" onclick="bounceMasterFile()" style="width: 100%; margin-top: 5px;" disabled>💾 Rec Bounce File</button>
+    </div>
+</div>
+
+<script>
+    let liveWebSocket = null;
+    let audioContext = null;
+    let liveMicStream = null;
+    let scriptProcessor = null;
+    let isLiveStreaming = false;
+    let isStudioMuted = false;
+    let audioChunks = [];
+    let recordedAudioBlob = null;
+    let mediaRecorder = null;
+
+    const studioPresets = {
+        "clear-vocals": { gate_threshold: -45, gate_release: 150, eq_low: 0, eq_mid: 0, eq_high: 0, echo_time: 0.3, echo_feedback: 30, reverb_size: 0.5, fx_mix: 25, ducking_depth: 60 },
+        "radio-podcast": { gate_threshold: -35, gate_release: 100, eq_low: 6, eq_mid: -2, eq_high: 4, echo_time: 0.15, echo_feedback: 10, reverb_size: 0.2, fx_mix: 15, ducking_depth: 75 },
+        "big-hall": { gate_threshold: -50, gate_release: 300, eq_low: -2, eq_mid: 2, eq_high: 5, echo_time: 0.45, echo_feedback: 45, reverb_size: 0.85, fx_mix: 50, ducking_depth: 40 }
+    };
+
+    async function loadApplioModels() {
+        try {
+            const response = await fetch('https://127.0.0.1:6969/api/models');
+            const data = await response.json();
+            const mSelect = document.getElementById('rvc-model-select');
+            const iSelect = document.getElementById('rvc-index-select');
+            mSelect.innerHTML = '';
+            data.models.forEach(m => mSelect.add(new Option(m.split('/').pop(), m)));
+            iSelect.innerHTML = '<option value="">Kein Index ausgewählt</option>';
+            data.index_files.forEach(i => iSelect.add(new Option(i.split('/').pop(), i)));
+        } catch (err) { console.error("Fehler beim Modell-Scan:", err); }
+    }
+
+    function updateLiveInferenceParameters() {
+        if (!liveWebSocket || liveWebSocket.readyState !== WebSocket.OPEN) return;
+        liveWebSocket.send(JSON.stringify({
+            active_model: document.getElementById('rvc-model-select').value,
+            active_index: document.getElementById('rvc-index-select').value,
+            pitch_shift: parseInt(document.getElementById('pitch-shift-slider').value, 10),
+            is_feedback_killer_active: document.getElementById('chk-feedback-killer').checked,
+            gate_threshold: parseFloat(document.getElementById('gate-threshold-slider').value),
+            gate_release: parseFloat(document.getElementById('gate-release-slider').value),
+            eq_low: parseFloat(document.getElementById('eq-low-slider').value),
+            eq_mid: parseFloat(document.getElementById('eq-mid-slider').value),
+            eq_high: parseFloat(document.getElementById('eq-high-slider').value),
+            echo_time: parseFloat(document.getElementById('echo-time-slider').value),
+            echo_feedback: parseFloat(document.getElementById('echo-feedback-slider').value),
+            reverb_size: parseFloat(document.getElementById('reverb-size-slider').value),
+            fx_mix: parseFloat(document.getElementById('fx-mix-slider').value),
+            ducking_depth: parseFloat(document.getElementById('ducking-depth-slider').value)
+        }));
+    }
+
+    async function toggleStudioLiveMode() {
+        const indicator = document.getElementById('live-indicator');
+        if (isLiveStreaming) {
+            isLiveStreaming = false;
+            if (scriptProcessor) scriptProcessor.disconnect();
+            if (liveMicStream) liveMicStream.getTracks().forEach(t => t.stop());
+            if (audioContext) audioContext.close();
+            if (liveWebSocket) liveWebSocket.close();
+            indicator.className = "status-matrix"; indicator.textContent = "🔴 OFFLINE";
+        } else {
+            isLiveStreaming = true;
+            liveWebSocket = new WebSocket("wss://127.0.0.1:6969/ws/live");
+            liveWebSocket.onopen = () => updateLiveInferenceParameters();
+            liveWebSocket.onmessage = async (e) => {
+                if (e.data instanceof Blob && audioContext?.state === "running") {
+                    const buffer = await e.data.arrayBuffer();
+                    const i16 = new Int16Array(buffer);
+                    const f32 = new Float32Array(i16.length);
+                    let peak = 0;
+                    for (let i = 0; i < i16.length; i++) {
+                        f32[i] = i16[i] / 32768.0;
+                        if (Math.abs(f32[i]) > peak) peak = Math.abs(f32[i]);
+                    }
+                    if (window.updateVUMeterLevel) window.updateVUMeterLevel(20 * Math.log10(peak || 0.0001));
+                    const audioBuffer = audioContext.createBuffer(1, f32.length, 48000);
+                    audioBuffer.getChannelData(0).set(f32);
+                    const source = audioContext.createBufferSource();
+                    source.buffer = audioBuffer; source.connect(audioContext.destination); source.start();
+                }
+            };
+
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+            liveMicStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+            const source = audioContext.createMediaStreamSource(liveMicStream);
+            scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
+            source.connect(scriptProcessor); scriptProcessor.connect(audioContext.destination);
+            scriptProcessor.onaudioprocess = (ev) => {
+                if (!isLiveStreaming || liveWebSocket?.readyState !== WebSocket.OPEN) return;
+                const input = ev.inputBuffer.getChannelData(0);
+                const pcm = new Int16Array(input.length);
+                for (let i = 0; i < input.length; i++) {
+                    let s = isStudioMuted ? 0 : Math.max(-1, Math.min(1, input[i]));
+                    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                }
+                liveWebSocket.send(pcm.buffer);
+            };
+            indicator.className = "status-matrix live"; indicator.textContent = "🟢 LIVE BROADCAST";
+        }
+    }
+
+    function toggleStudioMute() {
+        isStudioMuted = !isStudioMuted;
+        const btn = document.getElementById('btn-mute-toggle');
+        btn.textContent = isStudioMuted ? "🔇 Stummgeschaltet" : "🎤 Mikrofon Aktiv";
+        btn.className = isStudioMuted ? "btn-danger" : "btn-secondary";
+    }
+
+    async function startStudioRecording() {
+        audioChunks = []; recordedAudioBlob = null;
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+        mediaRecorder.onstop = () => {
+            recordedAudioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+            document.getElementById('btn-bounce').disabled = false;
+            document.getElementById('rec-status').textContent = "Aufnahme im RAM. Bereit für Bounce.";
+        };
+        mediaRecorder.start(250);
+        document.getElementById('btn-rec-start').disabled = true; document.getElementById('btn-rec-stop').disabled = false;
+    }
+
+    function stopStudioRecording() {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+            mediaRecorder.stop();
+            document.getElementById('btn-rec-start').disabled = false; document.getElementById('btn-rec-stop').disabled = true;
+        }
+    }
+
+    async function bounceMasterFile() {
+        const formData = new FormData();
+        formData.append("audio", recordedAudioBlob, "studio_rec.wav");
+        formData.append("model", document.getElementById('rvc-model-select').value);
+        formData.append("index", document.getElementById('rvc-index-select').value);
+        formData.append("pitch", document.getElementById("pitch-shift-slider").value);
+        formData.append("format", document.getElementById('master-codec-select').value);
+
+        document.getElementById('rec-status').textContent = "Rendering Master via FFmpeg...";
+        const res = await fetch('https://127.0.0.1:6969/api/transform', { method: 'POST', body: formData });
+        const finalBlob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(finalBlob);
+        a.download = `super_impersonator_master.${document.getElementById('master-codec-select').value}`;
+        a.click();
+        document.getElementById('rec-status').textContent = "Bounce abgeschlossen!";
+    }
+
+    function initStudioVUMeter(canvasId) {
+        const canvas = document.getElementById(canvasId); if (!canvas) return;
+        const ctx = canvas.getContext('2d'); let currentDb = -60;
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#05030a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            let targetW = canvas.width * ((Math.max(-60, currentDb) + 60) / 60);
+            let grad = ctx.createLinearGradient(0, 0, canvas.width, 0);
+            grad.addColorStop(0, '#00e676'); grad.addColorStop(0.7, '#ffea00'); grad.addColorStop(0.9, '#ff1744');
+            ctx.fillStyle = grad; ctx.fillRect(0, 0, targetW, canvas.height);
+            requestAnimationFrame(draw);
+        }
+        window.updateVUMeterLevel = (db) => { currentDb = currentDb * 0.7 + db * 0.3; }; draw();
+    }
+
+    function linkSlider(id, targetId, suffix) {
+        const s = document.getElementById(id); const t = document.getElementById(targetId);
+        s.addEventListener('input', (e) => { t.textContent = e.target.value + suffix; updateLiveInferenceParameters(); });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadApplioModels(); initStudioVUMeter('dsp-vu-canvas');
+        linkSlider('pitch-shift-slider', 'val-pitch', ' ST');
+        linkSlider('ducking-depth-slider', 'val-ducking', ' %');
+        linkSlider('gate-threshold-slider', 'val-gate-th', ' dB');
+        linkSlider('gate-release-slider', 'val-gate-rel', ' ms');
+        linkSlider('eq-low-slider', 'val-eq-low', ' dB');
+        linkSlider('eq-mid-slider', 'val-eq-mid', ' dB');
+        linkSlider('eq-high-slider', 'val-eq-high', ' dB');
+        linkSlider('echo-time-slider', 'val-echo-time', ' s');
+        linkSlider('echo-feedback-slider', 'val-echo-fb', ' %');
+        linkSlider('reverb-size-slider', 'val-reverb', '');
+        linkSlider('fx-mix-slider', 'val-fx-mix', ' %');
+
+        document.getElementById('studio-preset-select').addEventListener('change', (e) => {
+            const p = studioPresets[e.target.value]; if (!p) return;
+            document.getElementById('gate-threshold-slider').value = p.gate_threshold;
+            document.getElementById('gate-release-slider').value = p.gate_release;
+            document.getElementById('eq-low-slider').value = p.eq_low;
+            document.getElementById('eq-mid-slider').value = p.eq_mid;
+            document.getElementById('eq-high-slider').value = p.eq_high;
+            document.getElementById('echo-time-slider').value = p.echo_time;
+            document.getElementById('echo-feedback-slider').value = p.echo_feedback;
+            document.getElementById('reverb-size-slider').value = p.reverb_size;
+            document.getElementById('fx-mix-slider').value = p.fx_mix;
+            document.getElementById('ducking-depth-slider').value = p.ducking_depth;
+            ['pitch-shift-slider','ducking-depth-slider','gate-threshold-slider','gate-release-slider','eq-low-slider','eq-mid-slider','eq-high-slider','echo-time-slider','echo-feedback-slider','reverb-size-slider','fx-mix-slider'].forEach(id => document.getElementById(id).dispatchEvent(new Event('input')));
+        });
+    });
+</script>
+</body>
+</html>
