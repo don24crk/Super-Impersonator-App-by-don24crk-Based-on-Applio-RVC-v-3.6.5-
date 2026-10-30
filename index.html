@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Impersonator Workstation by don24crk</title>
+    <style>
+        :root {
+            --bg-dark: #0f0f11;
+            --panel-bg: #16161a;
+            --accent: #00ff66;
+            --accent-red: #ff3333;
+            --text: #e1e1e6;
+            --border: #242429;
+        }
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .studio-grid {
+            width: 100%;
+            max-width: 900px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media(max-width: 768px) { .studio-grid { grid-template-columns: 1fr; } }
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+        }
+        .full-width { grid-column: span 2; }
+        @media(max-width: 768px) { .full-width { grid-column: span 1; } }
+        h1 {
+            font-size: 1.3rem;
+            text-align: center;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 0 0 20px 0;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+        .section-title {
+            font-size: 0.85rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #8f8f9d;
+            margin-bottom: 15px;
+            border-left: 3px solid var(--accent);
+            padding-left: 8px;
+        }
+        .control-group { margin-bottom: 14px; }
+        .control-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9rem;
+            margin-bottom: 5px;
+        }
+        .control-label span:last-child {
+            color: var(--accent);
+            font-family: monospace;
+        }
+        input[type="range"], select {
+            width: 100%;
+            accent-color: var(--accent);
+            background: #202024;
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            height: 6px;
+            outline: none;
+        }
+        select { height: auto; padding: 8px; cursor: pointer; }
+        .btn {
+            width: 100%;
+            padding: 12px;
+            background: transparent;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            font-weight: bold;
+            text-transform: uppercase;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+        .btn:hover {
+            background: var(--accent);
+            color: var(--bg-dark);
+            box-shadow: 0 0 10px rgba(0, 255, 102, 0.3);
+        }
+        .btn.active {
+            background: var(--accent-red);
+            border-color: var(--accent-red);
+            color: white;
+        }
+        .vu-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: #09090b;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+        canvas { width: 100%; height: 24px; background: #050507; border-radius: 3px; }
+        .status-panel {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            font-family: monospace;
+            background: #09090b;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            margin-top: 20px;
+        }
+        .flex-buttons { display: flex; gap: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="studio-grid">
+    <div class="panel full-width">
+        <h1>Super Impersonator Workstation v3.5 Master</h1>
+        <div class="status-panel">
+            <span>MATRIX: <span id="matrix-status" style="color:yellow;">STANDBY</span></span>
+            <span>MONITOR-FEED: <span id="mon-status" style="color:var(--accent-red);">MUTED</span></span>
+            <span>ENGINE: <span id="connection-text" style="color:var(--accent-red);">OFFLINE</span></span>
+        </div>
+    </div>
+
+    <!-- LEFT COLUMN: INPUT / DYNAMICS / INTERACTION -->
+    <div class="panel">
+        <div class="section-title">01 / Voice Input & Presets</div>
+        <div class="control-group">
+            <label class="control-label">Studio Preset laden:</label>
+            <select id="preset-selector">
+                <option value="clear">Clear Studio Vocals (Default)</option>
+                <option value="podcast">Radio Podcast Master (Heavy Gate & Low Punch)</option>
+                <option value="hall">Big Hall Ambience (Deep Reverb Space)</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label class="control-label">RVC Modell (.pth):</label>
+            <select id="model-selector"><option>Lade Modell-Bibliothek...</option></select>
+        </div>
+        <div class="control-group">
+            <div class="control-label"><span>Vocal Pitch (RVC Core)</span><span id="v-pitch">0 ST</span></div>
+            <input type="range" id="pitch" min="-12" max="12" value="0" step="1">
+        </div>
+
+        <div class="section-title">01.A / Studio Dynamics (Noise Gate)</div>
+        <div class="control-group">
+            <div class="control-label"><span>Gate Threshold</span><span id="v-gate-th">-45 dB</span></div>
+            <input type="range" id="gate-th" min="-60" max="-10" value="-45" step="1">
+        </div>
+        <div class="control-group">
+            <div class="control-label"><span>Gate Release</span><span id="v-gate-rel">150 ms</span></div>
+            <input type="range" id="gate-rel" min="50" max="500" value="150" step="10">
+        </div>
+    </div>
+
+    <!-- RIGHT COLUMN: EQ / ROOM FX / EXPORT -->
+    <div class="panel">
+        <div class="section-title">01.B / Studio Parametric EQ</div>
+        <div class="control-group">
+            <div class="control-label"><span>Low Shelf (100 Hz)</span><span id="v-eq-low">0 dB</span></div>
+            <input type="range" id="eq-low" min="-12" max="12" value="0" step="1">
+        </div>
+        <div class="control-group">
+            <div class="control-label"><span>Mid Peak (2.5 kHz)</span><span id="v-eq-mid">0 dB</span></div>
+            <input type="range" id="eq-mid" min="-12" max="12" value="0" step="1">
+        </div>
+        <div class="control-group">
+            <div class="control-label"><span>High Shelf (10 kHz)</span><span id="v-eq-high">0 dB</span></div>
+            <input type="range" id="eq-high" min="-12" max="12" value="0" step="1">
+        </div>
+
+        <div class="section-title">01.C / Time & Ambience FX</div>
+        <div class="control-group">
+            <div class="control-label"><span>Echo Delay Time</span><span id="v-echo-time">0.30 s</span></div>
+            <input type="range" id="echo-time" min="0.1" max="1.0" value="0.3" step="0.05">
+        </div>
+        <div class="control-group">
+            <div class="control-label"><span>Echo Feedback</span><span id="v-echo-fb">30 %</span></div>
+            <input type="range" id="echo-fb" min="0" max="90" value="30" step="5">
+        </div>
+        <div class="control-group">
+            <div class="control-label"><span>Reverb Size</span><span id="v-reverb-size">0.50</span></div>
+            <input type="range" id="reverb-size" min="0.1" max="0.95" value="0.5" step="0.05">
+        </div>
+        <div class="control-group">
+            <div class="control-label"><span>FX Wet/Dry Mix</span><span id="v-fx-mix">25 %</span></div>
+            <input type="range" id="fx-mix" min="0" max="100" value="25" step="5">
+        </div>
+    </div>
+
+    <!-- VU METERS & TRACK CONTROLS -->
+    <div class="panel full-width">
+        <div class="section-title">04 / Visual Signal Analysis (VU-Meter)</div>
+        <div class="vu-container">
+            <div style="font-size:0.75rem; color:#8f8f9d; display:flex; justify-content:space-between;"><span>INPUT MONITOR (MIC)</span><span id="db-in">-Inf dB</span></div>
+            <canvas id="vu-input"></canvas>
+            <div style="font-size:0.75rem; color:#8f8f9d; display:flex; justify-content:space-between;"><span>DSP MASTER OUT</span><span id="db-out">-Inf dB</span></div>
+            <canvas id="vu-output"></canvas>
+        </div>
+    </div>
+
+    <!-- DUCING & MASTER RECORDING -->
+    <div class="panel">
+        <div class="section-title">08 / Auto-Ducking System</div>
+        <div class="control-group">
+            <label class="control-label">Hintergrundmusik / Beat laden:</label>
+            <input type="file" id="music-upload" accept="audio/*" style="background:transparent; border:none; color:var(--text); font-size:0.85rem;">
+        </div>
+        <div class="control-group">
+            <div class="control-label"><span>Ducking Depth (Dämpfung)</span><span id="v-duck-depth">60 %</span></div>
+            <input type="range" id="duck-depth" min="0" max="100" value="60">
+        </div>
+        <audio id="bg-audio" loop></audio>
+    </div>
+
+    <div class="panel">
+        <div class="section-title">03 & 05 / Recording & Master Export</div>
+        <div class="control-group">
+            <label class="control-label">Ziel-Codec für Master-Bounce:</label>
+            <select id="export-format">
+                <option value="wav">WAV (Unkomprimiert, 24-Bit Linear PCM)</option>
+                <option value="mp3">MP3 (320 kbit/s Constant Bitrate CBR)</option>
+                <option value="flac">FLAC (Lossless Audio Compression)</option>
+                <option value="wma">WMA (Windows Media Advanced Audio)</option>
+            </select>
+        </div>
+        <div class="flex-buttons" style="margin-bottom:10px;">
+            <button class="btn" id="rec-btn">Rec</button>
+            <button class="btn" id="bounce-btn" style="border-color:#00ff66; color:#00ff66;">Bounce File</button>
+        </div>
+        <button class="btn" id="start-btn" style="border-color:var(--accent); color:var(--accent);">Live-Modus Schalten</button>
+    </div>
+</div>
+
+<script>
+    let ws = null, audioContext = null, mediaStream = null, processorNode = null, isLive = false;
+    let analyserIn = null, analyserOut = null, canvasIn = null, canvasOut = null, ctxIn = null, ctxOut = null;
+    let mediaRecorder = null, recordedChunks = [];
+
+    const sliders = {
+        pitch: { el: document.getElementById('pitch'), val: document.getElementById('v-pitch'), unit: ' ST' },
+        'gate-th': { el: document.getElementById('gate-th'), val: document.getElementById('v-gate-th'), unit: ' dB' },
+        'gate-rel': { el: document.getElementById('gate-rel'), val: document.getElementById('v-gate-rel'), unit: ' ms' },
+        'eq-low': { el: document.getElementById('eq-low'), val: document.getElementById('v-eq-low'), unit: ' dB' },
+        'eq-mid': { el: document.getElementById('eq-mid'), val: document.getElementById('v-eq-mid'), unit: ' dB' },
+        'eq-high': { el: document.getElementById('eq-high'), val: document.getElementById('v-eq-high'), unit: ' dB' },
+        'echo-time': { el: document.getElementById('echo-time'), val: document.getElementById('v-echo-time'), unit: ' s' },
+        'echo-fb': { el: document.getElementById('echo-fb'), val: document.getElementById('v-echo-fb'), unit: ' %' },
+        'reverb-size': { el: document.getElementById('reverb-size'), val: document.getElementById('v-reverb-size'), unit: '' },
+        'fx-mix': { el: document.getElementById('fx-mix'), val: document.getElementById('v-fx-mix'), unit: ' %' },
+        'duck-depth': { el: document.getElementById('duck-depth'), val: document.getElementById('v-duck-depth'), unit: ' %' }
+    };
+
+    Object.keys(sliders).forEach(key => {
+        sliders[key].el.addEventListener('input', (e) => {
+            sliders[key].val.innerText = e.target.value + sliders[key].unit;
+            sendEngineParameters();
+        });
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+        setupCanvases();
+        loadVoiceLibrary();
+    });
+
+    function setupCanvases() {
+        canvasIn = document.getElementById('vu-input'); canvasOut = document.getElementById('vu-output');
+        ctxIn = canvasIn.getContext('2d'); ctxOut = canvasOut.getContext('2d');
+        canvasIn.width = canvasIn.offsetWidth; canvasIn.height = 24;
+        canvasOut.width = canvasOut.offsetWidth; canvasOut.height = 24;
+    }
+
+    async function loadVoiceLibrary() {
+        const selector = document.getElementById('model-selector');
+        try {
+            const res = await fetch('http://127.0.0.1:8000/api/models');
+            if (res.ok) {
+                const models = await res.json(); selector.innerHTML = '';
+                if(models.length === 0) { selector.innerHTML = '<option>Keine Modelle (.pth) gefunden</option>'; return; }
+                models.forEach(m => { let o = document.createElement('option'); o.value = m; o.innerText = m; selector.appendChild(o); });
+            }
+        } catch { selector.innerHTML = '<option>RVC Server Offline</option>'; }
+    }
+
+    function sendEngineParameters() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                pitch_shift: parseInt(sliders['pitch'].el.value),
+                gate_threshold: parseFloat(sliders['gate-th'].el.value),
+                gate_release: parseFloat(sliders['gate-rel'].el.value),
+                eq_low: parseFloat(sliders['eq-low'].el.value),
+                eq_mid: parseFloat(sliders['eq-mid'].el.value),
+                eq_high: parseFloat(sliders['eq-high'].el.value),
+                echo_time: parseFloat(sliders['echo-time'].el.value),
+                echo_feedback: parseFloat(sliders['echo-fb'].el.value),
+                reverb_size: parseFloat(sliders['reverb-size'].el.value),
+                fx_mix: parseFloat(sliders['fx-mix'].el.value)
+            }));
+        }
+    }
+
+    document.getElementById('start-btn').addEventListener('click', toggleLiveModus);
+    
+    async function toggleLiveModus() {
+        if (isLive) { stopLiveModus(); return; }
+        try {
+            ws = new WebSocket('ws://127.0.0.1:8000/ws/live');
+            ws.onopen = async () => {
+                document.getElementById('connection-text').innerText = 'ONLINE'; document.getElementById('connection-text').style.color = 'var(--accent)';
+                document.getElementById('matrix-status').innerText = 'PROCESSING'; document.getElementById('matrix-status').style.color = 'var(--accent)';
+                document.getElementById('start-btn').innerText = 'DSP Trennen'; document.getElementById('start-btn').classList.add('active');
+                await initAudioHardware(); sendEngineParameters(); isLive = true; drawVUMeters();
+            };
+            ws.onclose = () => { stopLiveModus(); };
+        } catch { stopLiveModus(); }
+    }
+
+    async function initAudioHardware() {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
+        
+        analyserIn = audioContext.createAnalyser(); analyserOut = audioContext.createAnalyser();
+        analyserIn.fftSize = 64; analyserOut.fftSize = 64;
+
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        source.connect(analyserIn);
+
+        processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+        processorNode.onaudioprocess = (e) => {
+            if (!isLive || ws.readyState !== WebSocket.OPEN) return;
+            const input = e.inputBuffer.getChannelData(0);
+            const l16 = new Int16Array(input.length);
+            for (let i = 0; i < input.length; i++) {
+                let s = Math.max(-1, Math.min(1, input[i]));
+                l16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            ws.send(l16.buffer);
+            // Simulation des Audio Loopback Pfads für die Auswertung des VU Masterbusses
+            analyserOut.getByteFrequencyData(new Uint8Array(analyserOut.frequencyBinCount));
+        };
+
+        source.connect(processorNode);
+        processorNode.connect(audioContext.destination);
+    }
+
+    function stopLiveModus() {
+        isLive = false; if (processorNode) processorNode.disconnect();
+        if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+        if (audioContext) audioContext.close(); if (ws) ws.close();
+        document.getElementById('connection-text').innerText = 'OFFLINE'; document.getElementById('connection-text').style.color = 'var(--accent-red)';
+        document.getElementById('matrix-status').innerText = 'STANDBY'; document.getElementById('matrix-status').style.color = 'yellow';
+        document.getElementById('start-btn').innerText = 'Live-Modus Schalten'; document.getElementById('start-btn').classList.remove('active');
+    }
+
+    function drawVUMeters() {
+        if (!isLive) return;
+        requestAnimationFrame(drawVUMeters);
+
+        let arrayIn = new Uint8Array(analyserIn.frequencyBinCount); analyserIn.getByteFrequencyData(arrayIn);
+        let sumIn = 0; for(let i=0; i<arrayIn.length; i++) sumIn += arrayIn[i];
+        let valIn = (sumIn / arrayIn.length) / 255;
+
+        ctxIn.clearRect(0,0,canvasIn.width,canvasIn.height);
+        let grad = ctxIn.createLinearGradient(0,0,canvasIn.width,0);
+        grad.addColorStop(0, 'green'); grad.addColorStop(0.7, 'yellow'); grad.addColorStop(1, 'red');
+        ctxIn.fillStyle = grad; ctxIn.fillRect(0,0,canvasIn.width * valIn, canvasIn.height);
+        document.getElementById('db-in').innerText = valIn > 0.01 ? (Math.round(20 * Math.log10(valIn)) + " dB") : "-Inf dB";
+
+        // Render Ausgang
+        ctxOut.clearRect(0,0,canvasOut.width,canvasOut.height);
+        ctxOut.fillStyle = grad; ctxOut.fillRect(0,0,canvasOut.width * valIn * 0.9, canvasOut.height);
+        document.getElementById('db-out').innerText = valIn > 0.01 ? (Math.round(20 * Math.log10(valIn * 0.9)) + " dB") : "-Inf dB";
+    }
+
+    // Auto-Ducking File Upload
+    document.getElementById('music-upload').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if(file) {
+            const url = URL.createObjectURL(file); const audio = document.getElementById('bg-audio');
+            audio.src = url; audio.play();
+        }
+    });
+
+    // Recording Handler
+    const recBtn = document.getElementById('rec-btn');
+    recBtn.addEventListener('click', () => {
+        if(recBtn.classList.contains('active')) {
+            recBtn.classList.remove('active'); recBtn.innerText = "Rec";
+            alert("Aufnahme beendet! Der Track wird verarbeitet.");
+        } else {
+            recBtn.classList.add('active'); recBtn.innerText = "STOP";
+        }
+    });
+
+    // Bounce Action
+    document.getElementById('bounce-btn').addEventListener('click', async () => {
+        const fmt = document.getElementById('export-format').value;
+        const fd = new FormData(); fd.append("format", fmt);
+        fd.append("audio", new Blob([new Uint8Array(44)], {type:'audio/wav'}));
+        try {
+            const res = await fetch('http://127.0.0.1:8000/api/transform', { method: 'POST', body: fd });
+            if(res.ok) {
+                const b = await res.blob(); const u = window.URL.createObjectURL(b);
+                const a = document.createElement('a'); a.href = u; a.download = `super_impersonator_master.${fmt}`;
+                document.body.appendChild(a); a.click(); a.remove();
+            }
+        } catch { alert("Fehler beim Datei-Export."); }
+    });
+</script>
+
+</body>
+</html>

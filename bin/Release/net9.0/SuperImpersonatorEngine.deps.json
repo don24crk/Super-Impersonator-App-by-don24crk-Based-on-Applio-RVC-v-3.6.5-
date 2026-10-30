@@ -1,0 +1,23 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v9.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v9.0": {
+      "SuperImpersonatorEngine/1.0.0": {
+        "runtime": {
+          "SuperImpersonatorEngine.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "SuperImpersonatorEngine/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
