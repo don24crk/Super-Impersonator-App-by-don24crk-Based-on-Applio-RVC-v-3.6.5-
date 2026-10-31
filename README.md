@@ -1,6 +1,6 @@
 # Super Impersonator app by don24crk - C# Advanced DSP Studio Engine
 
-Dieses Projekt ist eine hochperformante, native C# Audio-Workstation (DAW) und Live-Matrix, basierend auf den Prinzipien und Core-Inferenzen der **Applio RVC v3.6.5** Engine.
+Dieses Projekt ist eine hochperformante, native C++ Audio-Workstation (DAW) und Live-Matrix, basierend auf den Prinzipien und Core-Inferenzen der **Applio RVC v3.6.5** Engine.
 
 ## 🎛️ Kernkomponenten & DSP-Schnittstellen
 
