@@ -1,6 +1,6 @@
-# Super Impersonator app by don24crk - Python 3.12 Advanced DSP Studio Engine
+# Super Impersonator app by don24crk - Python 3.12 und C# Advanced DSP Studio Engine 
 
-Dieses Projekt ist eine hochperformante, Python 3.12 Audio-Workstation (DAW) und Live-Matrix, basierend auf den Prinzipien und Core-Inferenzen der **Applio RVC v3.6.5** Engine.
+Dieses Projekt ist eine hochperformante, Python 3.12 Audio-Workstation (DAW) und Live-Matrix, basierend auf den Prinzipien und Core-Inferenzen der **Applio RVC v3.7.1** Engine.
 
 ## 🎛️ Kernkomponenten & DSP-Schnittstellen
 
