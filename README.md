@@ -14,9 +14,7 @@ Dieses Projekt ist eine hochperformante, Python 3.12 Audio-Workstation (DAW) und
 
 ## 🚀 Installation & Schnellstart
 
-1. Platziere alle Code-Dateien (`Program.cs`, `index.html`, `Makefile`, `launcher.bat`) im selben Ordner.
-2. Starte die Anwendung über einen Doppelklick auf die **`launcher.bat`**.
-3. Öffne die **`index.html`** in einem modernen Webbrowser (z.B. Google Chrome oder Microsoft Edge), gewähre die Mikrofon-Rechte und klicke auf **Live-Modus Schalten**.
+1. Platziere alle Code-Dateien (`infer-web.py`, `go-web.bat`, `launch-web.bat`) im selben Ordner.
+2. Starte die Anwendung über einen Doppelklick auf die **`launch-web.bat oder go-web.bat`**.
 
----
 *Entwickelt von don24crk.*
