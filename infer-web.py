@@ -1,707 +1,1380 @@
+import base64
+import json
 import os
-import sys
-import glob
 import shutil
-import threading
+import sys
 from datetime import datetime
+from html import escape
+from pathlib import Path
+
+import gradio as gr
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
-import gradio as gr
 
-# Pfade definieren
-ENGINE_DIR = os.getcwd()
-APPLIO_DIR = r"C:\Users\User\Downloads\ApplioV3.7.1"
-FFMPEG_BIN_DIR = r"C:\Users\User\Downloads\Super Impersonator app by don24crk\Engine"
-MODELS_DIR = os.path.join(ENGINE_DIR, "assets", "models")
-APPLIO_MODELS_DIR = os.path.join(APPLIO_DIR, "rvc", "models")
-RECORDINGS_DIR = os.path.join(ENGINE_DIR, "assets", "recordings")
-BACKUP_DIR = r"C:\Backups"
 
-if os.path.exists(FFMPEG_BIN_DIR):
-    os.environ["PATH"] += os.pathsep + FFMPEG_BIN_DIR
-    print(f"?? FFmpeg & FFprobe Pfad registriert: {FFMPEG_BIN_DIR}")
+# ---------------------------------------------------------------------------
+# Paths and environment
+# ---------------------------------------------------------------------------
+
+ENGINE_DIR = Path(__file__).resolve().parent
+APPLIO_DIR = Path(
+    os.environ.get(
+        "APPLIO_DIR",
+        r"C:\Users\User\Downloads\ApplioV3.7.1",
+    )
+)
+FFMPEG_BIN_DIR = ENGINE_DIR
+MODELS_DIR = ENGINE_DIR / "assets" / "models"
+APPLIO_MODELS_DIR = APPLIO_DIR / "rvc" / "models"
+RECORDINGS_DIR = ENGINE_DIR / "assets" / "recordings"
+TEMP_DIR = ENGINE_DIR / "assets" / "temp"
+BACKUP_DIR = Path(r"C:\Backups")
+AVATAR_DIR = Path(
+    r"C:\Users\User\Downloads\Super Impersonator app by don24crk\Engine\avatare"
+)
+
+ffmpeg_path = FFMPEG_BIN_DIR / "ffmpeg.exe"
+if ffmpeg_path.exists():
+    os.environ["PATH"] = (
+        str(FFMPEG_BIN_DIR) + os.pathsep + os.environ.get("PATH", "")
+    )
+
 
 def inject_applio_paths():
-    """Injiziert die Applio-Pfade stabil in das laufende Python-System."""
-    if os.path.exists(APPLIO_DIR):
-        if APPLIO_DIR not in sys.path:
-            sys.path.insert(0, os.path.join(APPLIO_DIR, "src"))
-            sys.path.insert(0, APPLIO_DIR)
+    """Add the configured Applio directories to Python's import path."""
+    paths = [
+        APPLIO_DIR,
+        APPLIO_DIR / "src",
+        APPLIO_DIR / ".venv" / "Lib" / "site-packages",
+    ]
+    for path in paths:
+        path_str = str(path)
+        if path.exists() and path_str not in sys.path:
+            sys.path.insert(0, path_str)
 
-            applio_venv_packages = os.path.join(APPLIO_DIR, ".venv", "Lib", "site-packages")
-            if os.path.exists(applio_venv_packages):
-                sys.path.insert(0, applio_venv_packages)
-            os.environ["CUSTOM_APPLIO_PATH"] = APPLIO_DIR
+    os.environ["CUSTOM_APPLIO_PATH"] = str(APPLIO_DIR)
 
-# Initiale Injektion für den Hauptthread
+
 inject_applio_paths()
 
-# Globale Kontrollvariablen für Live-Inferenz und Recording
-live_streaming = False
-live_thread = None
-current_live_vc = None
-current_live_model_path = ""
 
+# ---------------------------------------------------------------------------
+# Shared live-audio state
+# ---------------------------------------------------------------------------
+
+live_streaming = False
+live_stream = None
 is_recording = False
 recorded_blocks = []
 current_live_vu_level = -60.0
-last_recorded_file = None
 
-# Daten-Arrays für den WebformVisualizer im Frontend (per State simuliert)
-vocal_waveform_data = [0.0] * 50
-bgm_waveform_data = [0.0] * 50
 
-# Definition der Presets
+# ---------------------------------------------------------------------------
+# Presets
+# ---------------------------------------------------------------------------
+
 STUDIO_PRESETS = {
     "Standard (Manuell)": {
-        "vocal_gain": 0.0, "noise_red": 0, "gate_thresh": -50, "gate_release": 150,
-        "comp_thresh": -20, "comp_ratio": 3.5, "comp_attack": 15, "comp_release": 200,
-        "eq_low": 0, "eq_mid": 2, "eq_high": 1, "echo_time": 0.3, "echo_fb": 30,
-        "reverb_size": 0.5, "fx_mix": 15
+        "vocal_gain": 0.0,
+        "noise_red": 0,
+        "gate_thresh": -50,
+        "gate_release": 150,
+        "comp_thresh": -20,
+        "comp_ratio": 3.5,
+        "comp_attack": 15,
+        "comp_release": 200,
+        "eq_low": 0,
+        "eq_mid": 2,
+        "eq_high": 1,
+        "echo_time": 0.3,
+        "echo_fb": 30,
+        "reverb_size": 0.5,
+        "fx_mix": 15,
     },
     "Radio-Stimme (Fat Voice)": {
-        "vocal_gain": 4.0, "noise_red": 40, "gate_thresh": -45, "gate_release": 120,
-        "comp_thresh": -24, "comp_ratio": 5.0, "comp_attack": 10, "comp_release": 150,
-        "eq_low": 6, "eq_mid": -1, "eq_high": 4, "echo_time": 0.2, "echo_fb": 15,
-        "reverb_size": 0.3, "fx_mix": 20
+        "vocal_gain": 4.0,
+        "noise_red": 40,
+        "gate_thresh": -45,
+        "gate_release": 120,
+        "comp_thresh": -24,
+        "comp_ratio": 5.0,
+        "comp_attack": 10,
+        "comp_release": 150,
+        "eq_low": 6,
+        "eq_mid": -1,
+        "eq_high": 4,
+        "echo_time": 0.2,
+        "echo_fb": 15,
+        "reverb_size": 0.3,
+        "fx_mix": 20,
     },
     "Podcast (Warm & Nah)": {
-        "vocal_gain": 3.0, "noise_red": 60, "gate_thresh": -48, "gate_release": 200,
-        "comp_thresh": -18, "comp_ratio": 3.0, "comp_attack": 20, "comp_release": 250,
-        "eq_low": 4, "eq_mid": 3, "eq_high": 0, "echo_time": 0.0, "echo_fb": 0,
-        "reverb_size": 0.1, "fx_mix": 5
+        "vocal_gain": 3.0,
+        "noise_red": 60,
+        "gate_thresh": -48,
+        "gate_release": 200,
+        "comp_thresh": -18,
+        "comp_ratio": 3.0,
+        "comp_attack": 20,
+        "comp_release": 250,
+        "eq_low": 4,
+        "eq_mid": 3,
+        "eq_high": 0,
+        "echo_time": 0.0,
+        "echo_fb": 0,
+        "reverb_size": 0.1,
+        "fx_mix": 5,
     },
     "Clear Vocal (Kristallklar)": {
-        "vocal_gain": 2.0, "noise_red": 30, "gate_thresh": -52, "gate_release": 100,
-        "comp_thresh": -15, "comp_ratio": 2.5, "comp_attack": 8, "comp_release": 100,
-        "eq_low": -3, "eq_mid": 1, "eq_high": 6, "echo_time": 0.4, "echo_fb": 25,
-        "reverb_size": 0.6, "fx_mix": 25
-    }
+        "vocal_gain": 2.0,
+        "noise_red": 30,
+        "gate_thresh": -52,
+        "gate_release": 100,
+        "comp_thresh": -15,
+        "comp_ratio": 2.5,
+        "comp_attack": 8,
+        "comp_release": 100,
+        "eq_low": -3,
+        "eq_mid": 1,
+        "eq_high": 6,
+        "echo_time": 0.4,
+        "echo_fb": 25,
+        "reverb_size": 0.6,
+        "fx_mix": 25,
+    },
 }
 
+PRESET_OUTPUT_KEYS = [
+    "vocal_gain",
+    "noise_red",
+    "gate_thresh",
+    "gate_release",
+    "comp_thresh",
+    "comp_ratio",
+    "comp_attack",
+    "comp_release",
+    "eq_low",
+    "eq_mid",
+    "eq_high",
+    "echo_time",
+    "echo_fb",
+    "reverb_size",
+    "fx_mix",
+]
+
+
+def load_preset_values(preset_name):
+    """Return Gradio updates in the same order as the preset controls."""
+    preset = STUDIO_PRESETS.get(preset_name)
+    if preset is None:
+        return [gr.update() for _ in PRESET_OUTPUT_KEYS]
+
+    return [gr.update(value=preset[key]) for key in PRESET_OUTPUT_KEYS]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def get_audio_devices():
-    """Scannt die System-Hardware nach Audio-Geräten."""
+    """Return device labels and valid default input/output labels."""
     try:
         devices = sd.query_devices()
-        input_devs = []
-        output_devs = []
-        for i, dev in enumerate(devices):
-            if dev['max_input_channels'] > 0:
-                input_devs.append(f"{i}: {dev['name']}")
-            if dev['max_output_channels'] > 0:
-                output_devs.append(f"{i}: {dev['name']}")
 
-        default_in = f"{sd.default.device}: {devices[sd.default.device]['name']}" if sd.default.device >= 0 else None
-        default_out = f"{sd.default.device}: {devices[sd.default.device]['name']}" if sd.default.device >= 0 else None
+        input_devices = [
+            f"{index}: {device['name']}"
+            for index, device in enumerate(devices)
+            if device["max_input_channels"] > 0
+        ]
+        output_devices = [
+            f"{index}: {device['name']}"
+            for index, device in enumerate(devices)
+            if device["max_output_channels"] > 0
+        ]
 
-        return input_devs, output_devs, default_in, default_out
-    except Exception as e:
-        print(f"?? Fehler beim Abrufen der Audiogeräte: {e}")
-        return ["0: Standard-Eingang"], ["0: Standard-Ausgang"], "0: Standard-Eingang", "0: Standard-Ausgang"
+        default_input, default_output = sd.default.device
+        default_input_label = None
+        default_output_label = None
+
+        if (
+            default_input is not None
+            and 0 <= default_input < len(devices)
+            and devices[default_input]["max_input_channels"] > 0
+        ):
+            default_input_label = (
+                f"{default_input}: {devices[default_input]['name']}"
+            )
+
+        if (
+            default_output is not None
+            and 0 <= default_output < len(devices)
+            and devices[default_output]["max_output_channels"] > 0
+        ):
+            default_output_label = (
+                f"{default_output}: {devices[default_output]['name']}"
+            )
+
+        if not input_devices:
+            input_devices = ["0: No input device available"]
+        if not output_devices:
+            output_devices = ["0: No output device available"]
+
+        if default_input_label not in input_devices:
+            default_input_label = input_devices[0]
+        if default_output_label not in output_devices:
+            default_output_label = output_devices[0]
+
+        return (
+            input_devices,
+            output_devices,
+            default_input_label,
+            default_output_label,
+        )
+    except Exception as exc:
+        print(f"Fehler beim Laden der Audiogeräte: {exc}")
+        return (
+            ["0: Standard-Eingang"],
+            ["0: Standard-Ausgang"],
+            "0: Standard-Eingang",
+            "0: Standard-Ausgang",
+        )
+
+
+def parse_device_index(device_label):
+    """Extract the numeric device index from a 'N: name' label."""
+    try:
+        return int(str(device_label).split(":", 1)[0])
+    except (ValueError, IndexError, AttributeError):
+        return None
+
 
 def scan_rvc_models():
-    """Scannt beide Modell-Verzeichnisse und gibt relative Pfade zurück."""
-    if not os.path.exists(MODELS_DIR):
-        os.makedirs(MODELS_DIR, exist_ok=True)
+    """Find model paths relative to either configured model directory."""
+    models = set()
 
-    models = []
+    for directory in (MODELS_DIR, APPLIO_MODELS_DIR):
+        if not directory.exists():
+            continue
 
-    # 1. Engine-Modelle scannen
-    for root, dirs, files in os.walk(MODELS_DIR):
-        for file in files:
-            if file.endswith(".pth"):
-                rel_path = os.path.relpath(os.path.join(root, file), MODELS_DIR)
-                formatted_path = rel_path.replace("\\", "/")
-                if formatted_path not in models:
-                    models.append(formatted_path)
-
-    # 2. Applio-Modelle scannen
-    if os.path.exists(APPLIO_MODELS_DIR):
-        for root, dirs, files in os.walk(APPLIO_MODELS_DIR):
-            for file in files:
-                if file.endswith(".pth"):
-                    rel_path = os.path.relpath(os.path.join(root, file), APPLIO_MODELS_DIR)
-                    formatted_path = rel_path.replace("\\", "/")
-                    if formatted_path not in models:
-                        models.append(formatted_path)
+        for model_path in directory.rglob("*.pth"):
+            try:
+                models.add(model_path.relative_to(directory).as_posix())
+            except ValueError:
+                continue
 
     return sorted(models)
 
-def get_dropdown_data():
-    models = scan_rvc_models()
-    if not models:
-        return ["Keine Modelle in assets/models/ gefunden"], "Keine Modelle in assets/models/ gefunden"
-    return models, models[0]
-
-def refresh_models():
-    choices, default_val = get_dropdown_data()
-    return gr.Dropdown(choices=choices, value=default_val)
 
 def find_associated_index(model_rel_path):
-    """Sucht die zugehörige .index-Datei in beiden Verzeichnissen."""
-    possible_abs_paths = [
-        os.path.join(MODELS_DIR, model_rel_path),
-        os.path.join(APPLIO_MODELS_DIR, model_rel_path)
-    ]
+    """Find an index file whose name contains the model's basename."""
+    model_base = Path(model_rel_path).stem.lower()
 
-    for model_abs_path in possible_abs_paths:
-        model_dir = os.path.dirname(model_abs_path)
-        model_base_name = os.path.splitext(os.path.basename(model_abs_path))[0]
+    for directory in (MODELS_DIR, APPLIO_MODELS_DIR):
+        if not directory.exists():
+            continue
 
-        if os.path.exists(model_dir):
-            exact_index_match = os.path.join(model_dir, f"{model_base_name}.index")
-            if os.path.exists(exact_index_match):
-                return exact_index_match
-            fallback_index_files = glob.glob(os.path.join(model_dir, "*.index"))
-            if fallback_index_files:
-                return fallback_index_files[0]
+        for index_path in directory.rglob("*.index"):
+            if model_base in index_path.stem.lower():
+                return str(index_path)
 
     return ""
 
-def update_hop_visibility(f0_method_val):
-    if "crepe" in f0_method_val:
-        return gr.Dropdown(visible=True)
-    return gr.Dropdown(visible=False)
 
-def load_preset_values(preset_name):
-    """Gibt die gespeicherten Parameter-Werte eines Presets an die UI zurück."""
-    if preset_name in STUDIO_PRESETS:
-        p = STUDIO_PRESETS[preset_name]
-        return (
-            p["vocal_gain"], p["noise_red"], p["gate_thresh"], p["gate_release"],
-            p["comp_thresh"], p["comp_ratio"], p["comp_attack"], p["comp_release"],
-            p["eq_low"], p["eq_mid"], p["eq_high"], p["echo_time"], p["echo_fb"],
-            p["reverb_size"], p["fx_mix"]
-        )
-    return [gr.update() for _ in range(15)]
+def resolve_model_path(model_rel_path):
+    """Resolve a model path while preventing paths outside configured roots."""
+    if not model_rel_path:
+        return None
+
+    relative_path = Path(model_rel_path)
+    if relative_path.is_absolute():
+        return None
+
+    for directory in (MODELS_DIR, APPLIO_MODELS_DIR):
+        root = directory.resolve()
+        candidate = (root / relative_path).resolve()
+
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+
+        if candidate.is_file():
+            return candidate
+
+    return None
+
+
+def make_output_path(directory, prefix, extension):
+    """Create a unique timestamped output path."""
+    directory.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    return directory / f"{prefix}_{timestamp}.{extension}"
+
 
 def convert_codec(input_wav, target_codec, mp3_bitrate=320, output_dir=None):
-    ext = target_codec.lower()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_dir = output_dir if output_dir else ENGINE_DIR
-    prefix = "live_rec" if output_dir == RECORDINGS_DIR else "master_bounce"
-    final_output_path = os.path.join(base_dir, f"{prefix}_{timestamp}.{ext}")
+    """Convert a WAV file, falling back to WAV if conversion fails."""
+    target_codec = str(target_codec).lower()
 
-    if ext == "wav":
-        shutil.copy(input_wav, final_output_path)
-        if output_dir == RECORDINGS_DIR:
-            try:
-                os.makedirs(BACKUP_DIR, exist_ok=True)
-                shutil.copy(final_output_path, os.path.join(BACKUP_DIR, os.path.basename(final_output_path)))
-                print(f"??? Redundanz-Backup erfolgreich: {BACKUP_DIR}")
-            except Exception as b_err:
-                print(f"?? Backup-Fehler: {b_err}")
-        return final_output_path
+    if target_codec not in {"wav", "mp3", "flac", "wma"}:
+        raise ValueError(f"Unsupported export format: {target_codec}")
+
+    directory = Path(output_dir) if output_dir else ENGINE_DIR
+    prefix = "live_rec" if output_dir else "master_bounce"
+    final_path = make_output_path(directory, prefix, target_codec)
+
+    if target_codec == "wav":
+        shutil.copy2(input_wav, final_path)
+    else:
+        try:
+            from pydub import AudioSegment
+
+            if ffmpeg_path.exists():
+                AudioSegment.converter = str(ffmpeg_path)
+
+            audio = AudioSegment.from_wav(str(input_wav))
+            export_options = {}
+
+            if target_codec == "mp3":
+                export_options["bitrate"] = f"{int(mp3_bitrate)}k"
+
+            audio.export(
+                str(final_path),
+                format=target_codec,
+                **export_options,
+            )
+        except Exception as exc:
+            print(f"Codec-Fehler ({exc}); nutze WAV-Fallback.")
+            final_path = make_output_path(directory, prefix, "wav")
+            shutil.copy2(input_wav, final_path)
+
+    if output_dir:
+        try:
+            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(final_path, BACKUP_DIR / final_path.name)
+        except Exception as exc:
+            print(f"Redundanz-Backup fehlgeschlagen: {exc}")
+
+    return str(final_path)
+
+
+# ---------------------------------------------------------------------------
+# Studio effects
+# ---------------------------------------------------------------------------
+
+def build_effect_boards(
+    vocal_gain,
+    gate_thresh,
+    gate_release,
+    comp_thresh,
+    comp_ratio,
+    comp_attack,
+    comp_release,
+    eq_low,
+    eq_mid,
+    eq_high,
+    echo_time,
+    echo_feedback,
+    reverb_size,
+):
+    """Build dry and wet Pedalboard chains using available plugins."""
+    from pedalboard import (
+        Compressor,
+        Delay,
+        Gain,
+        HighShelfFilter,
+        LowShelfFilter,
+        NoiseGate,
+        PeakFilter,
+        Pedalboard,
+        Reverb,
+    )
+
+    dry_board = Pedalboard(
+        [
+            Gain(gain_db=float(vocal_gain)),
+            NoiseGate(
+                threshold_db=float(gate_thresh),
+                release_ms=float(gate_release),
+            ),
+            Compressor(
+                threshold_db=float(comp_thresh),
+                ratio=float(comp_ratio),
+                attack_ms=float(comp_attack),
+                release_ms=float(comp_release),
+            ),
+            LowShelfFilter(
+                cutoff_frequency_hz=100.0,
+                gain_db=float(eq_low),
+            ),
+            PeakFilter(
+                cutoff_frequency_hz=2500.0,
+                gain_db=float(eq_mid),
+                q=1.0,
+            ),
+            HighShelfFilter(
+                cutoff_frequency_hz=10000.0,
+                gain_db=float(eq_high),
+            ),
+        ]
+    )
+
+    wet_board = Pedalboard(
+        [
+            Delay(
+                delay_seconds=float(echo_time),
+                feedback=float(echo_feedback) / 100.0,
+                mix=1.0,
+            ),
+            Reverb(
+                room_size=float(reverb_size),
+                wet_level=1.0,
+                dry_level=0.0,
+            ),
+        ]
+    )
+
+    return dry_board, wet_board
+
+
+def apply_studio_fx(
+    input_wav_path,
+    vocal_gain,
+    noise_red,
+    gate_thresh,
+    gate_release,
+    comp_thresh,
+    comp_ratio,
+    comp_attack,
+    comp_release,
+    eq_low,
+    eq_mid,
+    eq_high,
+    echo_time,
+    echo_fb,
+    reverb_size,
+    fx_mix,
+    target_sr,
+):
+    """Apply effects and write a correctly shaped WAV file."""
+    del noise_red, target_sr  # Noise reduction is not implemented in this chain.
+
     try:
-        from pydub import AudioSegment
-        ffmpeg_exe_path = os.path.join(FFMPEG_BIN_DIR, "ffmpeg.exe")
-        if os.path.exists(ffmpeg_exe_path):
-            AudioSegment.converter = ffmpeg_exe_path
-        sound = AudioSegment.from_wav(input_wav)
-        if ext == "mp3":
-            sound.export(final_output_path, format="mp3", bitrate=f"{int(mp3_bitrate)}k")
-        elif ext == "flac":
-            sound.export(final_output_path, format="flac")
-        elif ext in ["wma", "vob"]:
-            sound.export(final_output_path, format=ext)
-
-        if output_dir == RECORDINGS_DIR:
-            try:
-                os.makedirs(BACKUP_DIR, exist_ok=True)
-                shutil.copy(final_output_path, os.path.join(BACKUP_DIR, os.path.basename(final_output_path)))
-                print(f"??? Redundanz-Backup erfolgreich: {BACKUP_DIR}")
-            except Exception as b_err:
-                print(f"?? Backup-Fehler: {b_err}")
-
-        return final_output_path
-    except Exception as e:
-        print(f"?? Codec-Konvertierung fehlgeschlagen ({str(e)}). Gebe WAV-Backup aus.")
-        fallback_path = os.path.join(base_dir, f"{prefix}_{timestamp}_fallback.wav")
-        shutil.copy(input_wav, fallback_path)
-        return fallback_path
-
-def apply_studio_fx(input_wav_path, vocal_gain, noise_red, gate_thresh, gate_release,
-                    comp_thresh, comp_ratio, comp_attack, comp_release,
-                    eq_low, eq_mid, eq_high, echo_time, echo_fb,
-                    reverb_size, fx_mix, target_sr):
-    """Wendet die Studio-Effektkette auf eine WAV-Datei an."""
-    try:
-        from pedalboard import (
-            Pedalboard, Gain, NoiseFilter, NoiseGate, Compressor, PeakFilter,
-            LowShelfFilter, HighShelfFilter, Delay, Reverb, Mix, Limiter,
+        dry_board, wet_board = build_effect_boards(
+            vocal_gain,
+            gate_thresh,
+            gate_release,
+            comp_thresh,
+            comp_ratio,
+            comp_attack,
+            comp_release,
+            eq_low,
+            eq_mid,
+            eq_high,
+            echo_time,
+            echo_fb,
+            reverb_size,
         )
-        from pedalboard.io import AudioFile
 
-        with AudioFile(input_wav_path) as audio_file:
-            audio = audio_file.read(audio_file.frames)
-            source_sr = audio_file.samplerate
+        audio, source_sr = sf.read(
+            input_wav_path,
+            dtype="float32",
+            always_2d=True,
+        )
+        audio = audio.T
 
-        mix_factor = fx_mix / 100.0
-        board = Pedalboard([
-            Gain(gain_db=vocal_gain),
-            NoiseFilter(threshold_db=float(-100 + noise_red)),
-            NoiseGate(threshold_db=gate_thresh, release_ms=gate_release),
-            Compressor(threshold_db=comp_thresh, ratio=comp_ratio,
-                       attack_ms=comp_attack, release_ms=comp_release),
-            LowShelfFilter(cutoff_frequency_hz=100.0, gain_db=eq_low),
-            PeakFilter(cutoff_frequency_hz=2500.0, gain_db=eq_mid, q=1.0),
-            HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=eq_high),
-            Mix([Pedalboard([
-                Delay(delay_seconds=echo_time, feedback=echo_fb / 100.0, mix=1.0),
-                Reverb(room_size=reverb_size, wet_level=1.0, dry_level=0.0),
-            ])], mix_level=mix_factor),
-            Limiter(threshold_db=-0.5),
-        ])
-        effected = board(audio, source_sr)
-        temp_out_dir = os.path.join(ENGINE_DIR, "assets", "temp")
-        os.makedirs(temp_out_dir, exist_ok=True)
-        temp_wav = os.path.join(temp_out_dir, "temp_master.wav")
-        with AudioFile(temp_wav, "w", target_sr, effected.shape) as output_file:
-            output_file.write(effected)
-        return temp_wav
-    except Exception as fx_err:
-        print(f"FX Chain Error: {fx_err}")
+        dry = dry_board(audio, source_sr)
+        wet = wet_board(dry, source_sr)
+
+        mix = float(np.clip(float(fx_mix) / 100.0, 0.0, 1.0))
+        output = dry * (1.0 - mix) + wet * mix
+        output = np.clip(output, -1.0, 1.0).T
+
+        TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = make_output_path(TEMP_DIR, "temp_master", "wav")
+        sf.write(str(output_path), output, source_sr)
+
+        return str(output_path)
+    except Exception as exc:
+        print(f"FX-Chain-Fehler: {exc}")
         return input_wav_path
 
 
+def normalize_rvc_result(result, sample_rate):
+    """Normalize common Applio/RVC result forms to a WAV path."""
+    if isinstance(result, (str, os.PathLike)):
+        result_path = Path(result)
+        if result_path.is_file():
+            return str(result_path)
+
+    audio_result = result
+
+    if isinstance(result, tuple):
+        if len(result) == 2 and isinstance(result[1], (tuple, list)):
+            # Common RVC result: (message, (sample_rate, audio))
+            audio_result = result[1]
+        elif len(result) == 2:
+            # Also accept (sample_rate, audio).
+            audio_result = result
+        else:
+            raise RuntimeError("RVC returned an unexpected result tuple.")
+
+    if isinstance(audio_result, (tuple, list)) and len(audio_result) == 2:
+        returned_sr, audio = audio_result
+        audio = np.asarray(audio)
+
+        if audio.ndim == 1:
+            audio = audio[:, None]
+        elif audio.ndim == 2:
+            # RVC typically returns (samples, channels). Handle channel-first
+            # output when the first dimension is clearly the channel count.
+            if audio.shape[0] <= 8 and audio.shape[1] > audio.shape[0]:
+                audio = audio.T
+        else:
+            raise RuntimeError(
+                f"Unsupported RVC audio dimensions: {audio.ndim}"
+            )
+
+        TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = make_output_path(TEMP_DIR, "rvc_output", "wav")
+        sf.write(str(output_path), audio, int(returned_sr or sample_rate))
+        return str(output_path)
+
+    raise RuntimeError("Unrecognized RVC audio result.")
+
+
+# ---------------------------------------------------------------------------
+# Main inference
+# ---------------------------------------------------------------------------
+
 def process_audio(
-    input_audio, rvc_model, vocal_pitch, f0_method, index_rate, protect,
-    filter_radius, rms_mix_rate, hop_length, vocal_gain, noise_red,
-    gate_threshold, gate_release, comp_thresh, comp_ratio, comp_attack,
-    comp_release, eq_low, eq_mid, eq_high, echo_time, echo_feedback,
-    reverb_size, fx_mix, export_codec, sample_rate, mp3_bitrate,
+    input_audio,
+    rvc_model_path,
+    vocal_pitch,
+    f0_method,
+    index_rate,
+    protect,
+    filter_radius,
+    rms_mix_rate,
+    hop_length,
+    vocal_gain,
+    noise_red,
+    gate_threshold,
+    gate_release,
+    comp_thresh,
+    comp_ratio,
+    comp_attack,
+    comp_release,
+    eq_low,
+    eq_mid,
+    eq_high,
+    echo_time,
+    echo_feedback,
+    reverb_size,
+    fx_mix,
+    export_codec,
+    sample_rate,
+    mp3_bitrate,
 ):
     inject_applio_paths()
-    fixed_input_path = os.path.join(ENGINE_DIR, "audio.wav")
-    if not os.path.exists(fixed_input_path):
-        return None, f"Fehler: 'audio.wav' wurde nicht gefunden: {fixed_input_path}"
-    if not rvc_model or "Keine Modelle" in rvc_model:
-        return None, "Fehler: Kein gültiges RVC-Modell ausgewählt."
 
-    model_path = os.path.normpath(os.path.join(MODELS_DIR, rvc_model))
-    if not os.path.exists(model_path) and os.path.exists(APPLIO_MODELS_DIR):
-        model_path = os.path.normpath(os.path.join(APPLIO_MODELS_DIR, rvc_model))
-    index_path = find_associated_index(rvc_model)
-    sr_digits = "".join(char for char in str(sample_rate) if char.isdigit())
-    target_sr = int(sr_digits) if sr_digits else 48000
-    status_msg = (
-        f"Modell geladen: {os.path.basename(model_path)}\n"
-        f"Index geladen: {os.path.basename(index_path) if index_path else 'Keine (.index fehlt)'}\n"
-    )
+    input_path = Path(input_audio) if input_audio else ENGINE_DIR / "audio.wav"
+    if not input_path.is_file():
+        return None, f"Fehler: Audiodatei nicht gefunden: {input_path}"
+
+    if not rvc_model_path:
+        return None, "Fehler: Kein RVC-Modell ausgewählt."
+
+    model_path = resolve_model_path(rvc_model_path)
+    if model_path is None:
+        return None, f"Fehler: Modell nicht gefunden: {rvc_model_path}"
+
     try:
+        target_sr = int("".join(filter(str.isdigit, str(sample_rate))))
+        if target_sr <= 0:
+            raise ValueError(f"Ungültige Sample-Rate: {sample_rate}")
+
         from rvc.modules.vc.modules import VC
 
         vc = VC()
-        vc.get_vc(model_path)
-        results = vc.vc_single(
-            sid=0, input_audio_path=fixed_input_path, f0_up_key=vocal_pitch,
-            f0_file=None, f0_method=f0_method, file_index=index_path,
-            file_index2="", index_rate=index_rate,
-            filter_radius=int(filter_radius), resample_sr=target_sr,
-            rms_mix_rate=rms_mix_rate, protect=protect,
-            hop_length=int(hop_length) if "crepe" in f0_method else 128,
+        vc.get_vc(str(model_path))
+
+        result = vc.vc_single(
+            sid=0,
+            input_audio_path=str(input_path),
+            f0_up_key=int(vocal_pitch),
+            f0_file=None,
+            f0_method=str(f0_method),
+            file_index=find_associated_index(rvc_model_path),
+            file_index2="",
+            index_rate=float(index_rate),
+            filter_radius=int(filter_radius),
+            resample_sr=target_sr,
+            rms_mix_rate=float(rms_mix_rate),
+            protect=float(protect),
+            hop_length=(
+                int(hop_length)
+                if "crepe" in str(f0_method).lower()
+                else 128
+            ),
         )
-        _, rvc_wav_path = results
-        temp_master_wav = apply_studio_fx(
-            rvc_wav_path, vocal_gain, noise_red, gate_threshold, gate_release,
-            comp_thresh, comp_ratio, comp_attack, comp_release, eq_low, eq_mid,
-            eq_high, echo_time, echo_feedback, reverb_size, fx_mix, target_sr,
+
+        rvc_wav_path = normalize_rvc_result(result, target_sr)
+        master_path = apply_studio_fx(
+            rvc_wav_path,
+            vocal_gain,
+            noise_red,
+            gate_threshold,
+            gate_release,
+            comp_thresh,
+            comp_ratio,
+            comp_attack,
+            comp_release,
+            eq_low,
+            eq_mid,
+            eq_high,
+            echo_time,
+            echo_feedback,
+            reverb_size,
+            fx_mix,
+            target_sr,
         )
-        final_file_path = convert_codec(temp_master_wav, export_codec, mp3_bitrate)
-        return final_file_path, status_msg + "Studio Bounce erfolgreich abgeschlossen!"
+
+        final_path = convert_codec(
+            master_path,
+            export_codec,
+            mp3_bitrate,
+        )
+
+        return final_path, "Studio-Inferenz erfolgreich abgeschlossen!"
     except Exception as exc:
-        return None, f"Inferenz-Fehler: {exc}"
+        return None, f"Fehler in der Inferenz-Pipeline: {exc}"
 
 
-def rvc_live_worker(
-    rvc_model, vocal_pitch, f0_method, index_rate, block_size, sr,
-    input_idx, output_idx, vocal_gain, noise_red, gate_thresh, gate_release,
-    comp_thresh, comp_ratio, comp_attack, comp_release, eq_low, eq_mid,
-    eq_high, echo_time, echo_fb, reverb_size, fx_mix, bgm_file, bgm_volume,
-    ducking_db, sb_file_1, sb_volume_1, sb_pitch_1, sb_filter_1,
-):
-    global live_streaming, current_live_vc, current_live_model_path
-    global is_recording, recorded_blocks, current_live_vu_level
-    global vocal_waveform_data, bgm_waveform_data
+# ---------------------------------------------------------------------------
+# Live recording
+# ---------------------------------------------------------------------------
 
-    inject_applio_paths()
-    try:
-        from rvc.modules.vc.modules import VC
-        from pedalboard import (
-            Pedalboard, Gain, NoiseFilter, NoiseGate, Compressor, PeakFilter,
-            LowShelfFilter, HighShelfFilter, Delay, Reverb, Mix, Limiter,
-            HighpassFilter, LowPassFilter, PitchShift,
-        )
+def _live_audio_callback(indata, frames, time_info, status):
+    """Capture audio blocks and update the input peak meter."""
+    global current_live_vu_level
 
-        model_path = os.path.normpath(os.path.join(MODELS_DIR, rvc_model))
-        if not os.path.exists(model_path) and os.path.exists(APPLIO_MODELS_DIR):
-            model_path = os.path.normpath(os.path.join(APPLIO_MODELS_DIR, rvc_model))
-        index_path = find_associated_index(rvc_model)
-        if current_live_vc is None or current_live_model_path != model_path:
-            current_live_vc = VC()
-            current_live_vc.get_vc(model_path)
-            current_live_model_path = model_path
+    del frames, time_info
 
-        temp_in_file = os.path.join(ENGINE_DIR, "assets", "temp", "live_in.wav")
-        os.makedirs(os.path.dirname(temp_in_file), exist_ok=True)
+    if status:
+        print(f"Live-Stream Status: {status}")
 
-        bgm_data, bgm_sr, bgm_ptr = None, 44100, 0
-        if bgm_file and os.path.exists(bgm_file):
-            try:
-                bgm_data, bgm_sr = sf.read(bgm_file, dtype="float32")
-                if bgm_data.ndim > 1:
-                    bgm_data = bgm_data[:, 0]
-            except Exception as exc:
-                print(f"BGM Import-Fehler: {exc}")
+    block = np.asarray(indata, dtype=np.float32).copy()
+    if block.ndim == 1:
+        block = block[:, None]
 
-        sb_data_1, sb_sr_1, sb_ptr_1 = None, 44100, 0
-        if sb_file_1 and os.path.exists(sb_file_1):
-            try:
-                sb_data_1, sb_sr_1 = sf.read(sb_file_1, dtype="float32")
-                if sb_data_1.ndim > 1:
-                    sb_data_1 = sb_data_1[:, 0]
-                sb_board = Pedalboard()
-                if sb_pitch_1 != 0.0:
-                    sb_board.append(PitchShift(semitones=sb_pitch_1))
-                if sb_filter_1 == "High-Pass (Clean)":
-                    sb_board.append(HighpassFilter(cutoff_frequency_hz=300))
-                elif sb_filter_1 == "Low-Pass (Muffled)":
-                    sb_board.append(LowPassFilter(cutoff_frequency_hz=1200))
-                sb_data_1 = sb_board(sb_data_1, sb_sr_1)
-            except Exception as exc:
-                print(f"Soundboard Import-Fehler: {exc}")
-                sb_data_1 = None
+    if is_recording:
+        recorded_blocks.append(block)
 
-        mix_factor = fx_mix / 100.0
-        live_board = Pedalboard([
-            Gain(gain_db=vocal_gain),
-            NoiseFilter(threshold_db=float(-100 + noise_red)),
-            NoiseGate(threshold_db=gate_thresh, release_ms=gate_release),
-            Compressor(threshold_db=comp_thresh, ratio=comp_ratio,
-                       attack_ms=comp_attack, release_ms=comp_release),
-            LowShelfFilter(cutoff_frequency_hz=100.0, gain_db=eq_low),
-            PeakFilter(cutoff_frequency_hz=2500.0, gain_db=eq_mid, q=1.0),
-            HighShelfFilter(cutoff_frequency_hz=10000.0, gain_db=eq_high),
-            Mix([Pedalboard([
-                Delay(delay_seconds=echo_time, feedback=echo_fb / 100.0, mix=1.0),
-                Reverb(room_size=reverb_size, wet_level=1.0, dry_level=0.0),
-            ])], mix_level=mix_factor),
-            Limiter(threshold_db=-0.5),
-        ])
-
-        def audio_callback(indata, outdata, frames, time_info, status):
-            nonlocal bgm_ptr, sb_ptr_1
-            global current_live_vu_level, recorded_blocks
-            global vocal_waveform_data, bgm_waveform_data
-
-            if not live_streaming:
-                raise sd.CallbackStop
-            rms = np.sqrt(np.mean(indata ** 2))
-            current_live_vu_level = 20 * np.log10(rms) if rms > 0 else -60.0
-            if len(indata) >= 50:
-                vocal_waveform_data = indata[:50, 0].tolist()
-            is_speaking = current_live_vu_level > gate_thresh
-            current_ducking = ducking_db if is_speaking else 0.0
-            bgm_scale = 10 ** ((bgm_volume - current_ducking) / 20.0)
-            sb_scale = 10 ** (sb_volume_1 / 20.0)
-
-            try:
-                sf.write(temp_in_file, indata, sr)
-                _, rvc_wav = current_live_vc.vc_single(
-                    sid=0, input_audio_path=temp_in_file, f0_up_key=vocal_pitch,
-                    f0_file=None, f0_method=f0_method, file_index=index_path,
-                    file_index2="", index_rate=index_rate, filter_radius=3,
-                    resample_sr=sr, rms_mix_rate=0.25, protect=0.33, hop_length=128,
-                )
-                out_data, _ = sf.read(rvc_wav)
-                effected_live = live_board(out_data, sr)
-            except Exception:
-                effected_live = indata[:, 0]
-
-            mixed_block = np.zeros(frames, dtype="float32")
-            non_vocal_block = np.zeros(frames, dtype="float32")
-            vocal_count = min(len(effected_live), frames)
-            mixed_block[:vocal_count] += effected_live[:vocal_count]
-
-            if bgm_data is not None and bgm_ptr < len(bgm_data):
-                take = min(frames, len(bgm_data) - bgm_ptr)
-                chunk = bgm_data[bgm_ptr:bgm_ptr + take] * bgm_scale
-                mixed_block[:take] += chunk
-                non_vocal_block[:take] += chunk
-                bgm_ptr += take
-
-            if sb_data_1 is not None and sb_ptr_1 < len(sb_data_1):
-                take_sb = min(frames, len(sb_data_1) - sb_ptr_1)
-                chunk = sb_data_1[sb_ptr_1:sb_ptr_1 + take_sb] * sb_scale
-                mixed_block[:take_sb] += chunk
-                non_vocal_block[:take_sb] += chunk
-                sb_ptr_1 += take_sb
-
-            if len(non_vocal_block) >= 50:
-                bgm_waveform_data = non_vocal_block[:50].tolist()
-            if is_recording:
-                recorded_blocks.append(mixed_block.copy().reshape(-1, 1))
-            outdata[:, 0] = mixed_block
-
-        with sd.Stream(
-            samplerate=sr, blocksize=int(block_size),
-            device=(input_idx, output_idx), channels=1, callback=audio_callback,
-        ):
-            while live_streaming:
-                sd.sleep(100)
-    except Exception as exc:
-        print(f"Live-Stream Fehler: {exc}")
-        live_streaming = False
-
-
-def start_live_mode(
-    rvc_model, vocal_pitch, f0_method, index_rate, input_device, output_device,
-    block_size, vocal_gain, noise_red, gate_thresh, gate_release, comp_thresh,
-    comp_ratio, comp_attack, comp_release, eq_low, eq_mid, eq_high, echo_time,
-    echo_fb, reverb_size, fx_mix, bgm_file, bgm_volume, ducking_db,
-    sb_file_1, sb_volume_1, sb_pitch_1, sb_filter_1,
-):
-    global live_streaming, live_thread
-    if live_streaming:
-        return "Live-Modus läuft bereits."
-    if not rvc_model or "Keine Modelle" in rvc_model:
-        return "Fehler: RVC-Modell ungültig."
-    try:
-        input_idx = int(input_device.split(":")[0])
-        output_idx = int(output_device.split(":")[0])
-    except Exception:
-        return "Fehler: Audio-Geräteauswahl fehlerhaft."
-
-    live_streaming = True
-    live_thread = threading.Thread(
-        target=rvc_live_worker,
-        args=(
-            rvc_model, vocal_pitch, f0_method, index_rate, block_size, 44100,
-            input_idx, output_idx, vocal_gain, noise_red, gate_thresh,
-            gate_release, comp_thresh, comp_ratio, comp_attack, comp_release,
-            eq_low, eq_mid, eq_high, echo_time, echo_fb, reverb_size, fx_mix,
-            bgm_file, bgm_volume, ducking_db, sb_file_1, sb_volume_1,
-            sb_pitch_1, sb_filter_1,
-        ),
-        daemon=True,
-    )
-    live_thread.start()
-    return "LIVE INFERENZ AKTIV // Mischpult & Studio-Effektbänke online."
-
-
-def stop_live_mode():
-    global live_streaming, is_recording
-    if not live_streaming:
-        return "Live-Modus ist bereits offline."
-    live_streaming = False
-    is_recording = False
-    return "LIVE MODE BEENDET // Zurück im Studio-Modus."
+    peak = float(np.max(np.abs(block))) if block.size else 0.0
+    if peak > 1e-6:
+        current_live_vu_level = max(-60.0, 20.0 * np.log10(peak))
+    else:
+        current_live_vu_level = -60.0
 
 
 def update_live_vu():
-    global current_live_vu_level, live_streaming, vocal_waveform_data, bgm_waveform_data
+    """Return the current meter value and status label."""
     if not live_streaming:
-        return gr.update(value=-60.0), "OFFLINE", vocal_waveform_data, bgm_waveform_data
-    status_text = "MONITORING" if current_live_vu_level < -0.5 else "CLIPPING / OVERLOAD"
-    return gr.update(value=float(current_live_vu_level)), status_text, vocal_waveform_data, bgm_waveform_data
+        return gr.update(value=-60.0), "OFFLINE"
+
+    level = float(np.clip(current_live_vu_level, -60.0, 0.0))
+    status = "MONITORING" if level < -1.0 else "CLIPPING / OVERLOAD"
+    return gr.update(value=level), status
 
 
-def start_live_recording():
-    global is_recording, recorded_blocks, live_streaming
-    if not live_streaming:
-        return "Fehler: Benötigt aktiven LIVE MODE."
-    if is_recording:
-        return "Aufnahme läuft bereits."
-    recorded_blocks = []
-    is_recording = True
-    return "RECORDING GESTARTET // Studio Master wird aufgezeichnet..."
+def start_live_recording(input_device, output_device, block_size):
+    """Start microphone recording. The output device is reserved for future monitoring."""
+    global is_recording, recorded_blocks, live_streaming, live_stream
+
+    del output_device
+
+    if live_streaming:
+        return "Aufnahme läuft bereits..."
+
+    input_idx = parse_device_index(input_device)
+    if input_idx is None:
+        return "Fehler: Ungültiges Eingabegerät."
+
+    try:
+        device_info = sd.query_devices(input_idx)
+        max_channels = int(device_info["max_input_channels"])
+        if max_channels <= 0:
+            return "Fehler: Das ausgewählte Gerät hat keinen Audioeingang."
+
+        channels = max(1, min(max_channels, 2))
+        samplerate = int(device_info.get("default_samplerate") or 44100)
+
+        recorded_blocks = []
+        is_recording = True
+        live_streaming = True
+
+        live_stream = sd.InputStream(
+            device=input_idx,
+            channels=channels,
+            samplerate=samplerate,
+            blocksize=int(block_size),
+            dtype="float32",
+            callback=_live_audio_callback,
+        )
+        live_stream.start()
+
+        return "AUFNAHME GESTARTET..."
+    except Exception as exc:
+        is_recording = False
+        live_streaming = False
+        live_stream = None
+        return f"Fehler beim Starten der Aufnahme: {exc}"
 
 
 def stop_live_recording(export_codec, mp3_bitrate):
-    global is_recording, recorded_blocks, last_recorded_file
-    if not is_recording:
-        return gr.update(), "Keine aktive Live-Aufnahme gefunden."
+    """Stop recording and export the captured audio."""
+    global is_recording, recorded_blocks, live_streaming, live_stream
+
     is_recording = False
+    live_streaming = False
+    used_samplerate = 44100
+
+    if live_stream is not None:
+        try:
+            used_samplerate = int(live_stream.samplerate)
+            live_stream.stop()
+            live_stream.close()
+        except Exception as exc:
+            print(f"Fehler beim Schließen des Streams: {exc}")
+        finally:
+            live_stream = None
+
     if not recorded_blocks:
-        return gr.update(), "Keine Audio-Blöcke empfangen."
+        return gr.update(), "Keine Audiodaten aufgezeichnet."
+
     try:
-        os.makedirs(RECORDINGS_DIR, exist_ok=True)
-        temp_dir = os.path.join(ENGINE_DIR, "assets", "temp")
-        os.makedirs(temp_dir, exist_ok=True)
-        temp_rec_wav = os.path.join(temp_dir, "live_rec_temp.wav")
-        full_audio = np.concatenate(recorded_blocks, axis=0)
-        sf.write(temp_rec_wav, full_audio, 44100)
+        RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+        TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+        temp_wav = make_output_path(TEMP_DIR, "live_rec_temp", "wav")
+        audio = np.concatenate(recorded_blocks, axis=0)
+        recorded_blocks = []
+
+        sf.write(str(temp_wav), audio, used_samplerate)
         final_file = convert_codec(
-            temp_rec_wav, export_codec, mp3_bitrate, output_dir=RECORDINGS_DIR,
+            str(temp_wav),
+            export_codec,
+            mp3_bitrate,
+            output_dir=RECORDINGS_DIR,
         )
-        last_recorded_file = final_file
-        return gr.update(value=final_file), (
-            f"Erfolgreich exportiert & gespiegelt nach {BACKUP_DIR}:\n"
-            f"{os.path.basename(final_file)}"
+
+        return (
+            gr.update(value=final_file),
+            f"Aufnahme exportiert: {Path(final_file).name}",
         )
-    except Exception as rec_err:
-        return gr.update(), f"Fehler beim Schreiben: {rec_err}"
+    except Exception as exc:
+        recorded_blocks = []
+        return gr.update(), f"Fehler beim Exportieren: {exc}"
 
 
-available_choices, default_model = get_dropdown_data()
-input_devices, output_devices, def_in, def_out = get_audio_devices()
+# ---------------------------------------------------------------------------
+# Setcard UI helpers
+# ---------------------------------------------------------------------------
+
+def get_avatar_base64(model_stem):
+    """Find a matching avatar and return it as a data URI."""
+    if not AVATAR_DIR.exists():
+        return ""
+
+    extensions = [".png", ".jpg", ".jpeg", ".webp"]
+
+    for extension in extensions:
+        exact_image = AVATAR_DIR / f"{model_stem}{extension}"
+        if exact_image.is_file():
+            try:
+                encoded = base64.b64encode(exact_image.read_bytes()).decode(
+                    "utf-8"
+                )
+                mime_type = "jpeg" if extension == ".jpg" else extension[1:]
+                return f"data:image/{mime_type};base64,{encoded}"
+            except OSError:
+                pass
+
+    for extension in extensions:
+        for image_path in AVATAR_DIR.glob(f"*{extension}"):
+            image_stem = image_path.stem.lower()
+            model_name = model_stem.lower()
+
+            if model_name in image_stem or image_stem in model_name:
+                try:
+                    encoded = base64.b64encode(image_path.read_bytes()).decode(
+                        "utf-8"
+                    )
+                    mime_type = "jpeg" if extension == ".jpg" else extension[1:]
+                    return f"data:image/{mime_type};base64,{encoded}"
+                except OSError:
+                    pass
+
+    return ""
+
+
+def generate_setcards_html(models, selected_model):
+    """Generate clickable model cards with optional avatars."""
+    if not models:
+        return "Keine Modelle im Verzeichnis gefunden."
+
+    artist_meta = {
+        "michael_jackson": "Pop-Ikone / King of Pop",
+        "barack_obama": "Redner / Ex-Präsident",
+        "notorious_big": "Rap-Legende / Hip-Hop",
+        "conor_maynard": "Pop-Sänger / YouTuber",
+        "donald_trump": "Unternehmer / Politiker",
+        "joe_biden": "Staatsmann / Politiker",
+        "kalomira": "Pop-Sängerin / Entertainer",
+        "miley_cyrus": "Pop-Rock-Sängerin",
+        "the_weeknd": "RnB-Künstler / Producer",
+    }
+
+    cards = []
+
+    for model in models:
+        model_stem = Path(model).stem
+        model_lower = model_stem.lower()
+
+        category = "RVC Sprachmodell"
+        for key, value in artist_meta.items():
+            if key in model_lower or key.replace("_", "") in model_lower:
+                category = value
+                break
+
+        is_selected = model == selected_model
+        background = "#10B981" if is_selected else "#1E293B"
+        border = "#34D399" if is_selected else "#475569"
+        safe_name = escape(model_stem)
+        safe_category = escape(category)
+        safe_model = escape(model, quote=True)
+        js_model = json.dumps(model)
+
+        avatar_src = get_avatar_base64(model_stem)
+        if avatar_src:
+            avatar_html = (
+                f'<img src="{escape(avatar_src, quote=True)}" '
+                f'alt="{safe_name}" '
+                'style="width:72px;height:72px;object-fit:cover;'
+                'border-radius:50%;margin-bottom:10px;">'
+            )
+        else:
+            avatar_html = (
+                '<div style="width:72px;height:72px;border-radius:50%;'
+                'display:flex;align-items:center;justify-content:center;'
+                'background:#334155;color:#fff;font-size:24px;'
+                'font-weight:700;margin-bottom:10px;">'
+                f'{escape(model_stem[:1].upper() or "?")}'
+                '</div>'
+            )
+
+        cards.append(
+            f'<button type="button" '
+            f'data-model="{safe_model}" '
+            f'onclick="window.__selectModel({escape(js_model, quote=True)})" '
+            'style="cursor:pointer;text-align:center;color:#fff;'
+            'padding:16px;border-radius:14px;border:2px solid '
+            f'{border};background:{background};min-width:150px;">'
+            f'{avatar_html}'
+            f'<div style="font-weight:700;margin-bottom:4px;">{safe_name}</div>'
+            f'<div style="font-size:12px;color:#CBD5E1;">{safe_category}</div>'
+            "</button>"
+        )
+
+    return (
+        '<div style="display:flex;flex-wrap:wrap;gap:12px;">'
+        + "".join(cards)
+        + "</div>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gradio interface
+# ---------------------------------------------------------------------------
 
 custom_css = """
-.green-title h1 { display: inline-block; color: #22c55e !important; margin-right: 8px; }
-.red-title h1 { display: inline-block; color: #ef4444 !important; }
-.section-gain { background: #1e293b !important; padding: 15px; border-radius: 8px; border-left: 4px solid #3b82f6; margin-bottom: 10px; }
-.section-dynamics { background: #1e293b !important; padding: 10px; border-radius: 8px; border-left: 4px solid #06b6d4; }
-.section-eq { background: #1e293b !important; padding: 10px; border-radius: 8px; border-left: 4px solid #64748b; }
-.section-time { background: #1e293b !important; padding: 10px; border-radius: 8px; border-left: 4px solid #8b5cf6; }
-.section-mixer { background: #111827 !important; padding: 15px; border-radius: 8px; border-left: 4px solid #f59e0b; margin-top: 10px; }
-"""
-
-js_daw_pipeline = """
-() => {
-    document.documentElement.classList.add('dark');
-    console.log('DAW Shortcut Matrix & Canvas Engine geladen.');
-    window.addEventListener('keydown', (e) => {
-        if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
-            e.preventDefault();
-            document.querySelectorAll('button').forEach((btn) => {
-                if (btn.innerText.includes('REC START') || btn.innerText.includes('REC STOP')) btn.click();
-            });
-        }
-        if (e.ctrlKey && e.key === 'Enter') {
-            e.preventDefault();
-            document.querySelectorAll('button').forEach((btn) => {
-                if (btn.innerText.includes('LIVE MODE START') || btn.innerText.includes('LIVE MODE STOP')) btn.click();
-            });
-        }
-        if (e.key >= '1' && e.key <= '9') {
-            const trigger = document.querySelector('#sb_play_trigger');
-            if (trigger) trigger.click();
-        }
-    });
+#app_title h1 {
+    font-size: 2.5rem;
+    font-weight: 800;
+    text-align: center;
+    margin-bottom: 20px;
+}
+.title-super {
+    color: #FFFFFF !important;
+}
+.title-impersonator {
+    color: #10B981 !important;
+}
+.title-app {
+    color: #EF4444 !important;
 }
 """
 
-with gr.Blocks(title="Super Impersonator app", js=js_daw_pipeline, css=custom_css,
-               theme=gr.themes.Default()) as app:
-    with gr.Row():
-        gr.HTML("Super Impersonator app")
-        gr.Markdown("### Engine v3.0 DYNAMICS FX // by don24crk // Space: Rec Toggle | Ctrl+Enter: Live Toggle")
+models_list = scan_rvc_models()
+initial_model = models_list[0] if models_list else ""
+
+try:
+    input_devices, output_devices, default_input, default_output = (
+        get_audio_devices()
+    )
+except Exception:
+    input_devices, output_devices = [], []
+    default_input, default_output = None, None
+
+force_dark_js = """
+() => {
+    document.documentElement.classList.add('dark');
+    document.body.classList.add('dark');
+
+    window.__selectModel = function(model) {
+        const root = document.getElementById('hidden_model_trigger');
+        if (!root) return;
+
+        const elements = root.querySelectorAll('input, textarea');
+        elements.forEach(function(element) {
+            const setter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype,
+                'value'
+            ).set;
+            setter.call(element, model);
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+            element.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+    };
+}
+"""
+
+with gr.Blocks(
+    title="Super Impersonator App 3.0",
+    css=custom_css,
+    js=force_dark_js,
+) as demo:
+    gr.HTML(
+        """
+        <div id="app_title">
+            <h1>
+                <span class="title-super">SUPER</span>
+                <span class="title-impersonator">IMPERSONATOR</span>
+                <span class="title-app">APP 3.0</span>
+            </h1>
+        </div>
+        """
+    )
+
+    selected_model_state = gr.Textbox(
+        value=initial_model,
+        visible=False,
+        elem_id="hidden_model_trigger",
+        interactive=True,
+    )
 
     with gr.Row():
-        with gr.Column():
-            gr.Markdown("## 01 / INPUT SIGNAL & STUDIO FX CHAIN")
-            input_audio = gr.Audio(label="Studio I/O (Gesteuert über lokale audio.wav)", type="filepath")
-            with gr.Row():
-                rvc_model = gr.Dropdown(label="RVC Modell (.pth) [inkl. Unterordner]", choices=available_choices, value=default_model, scale=4)
-                refresh_btn = gr.Button("Refresh", scale=1)
-            vocal_pitch = gr.Slider(label="Vocal Pitch (Halbtöne)", minimum=-24, maximum=24, step=1, value=0)
-            f0_method = gr.Dropdown(label="F0 Pitch Extraction Method", choices=["rmvpe", "harvest", "crepe", "mangio-crepe", "pm", "dio"], value="crepe")
-            index_rate = gr.Slider(label="Index Rate (Stimmenähnlichkeit)", minimum=0.0, maximum=1.0, step=0.05, value=1.00)
-            protect = gr.Slider(label="Protect (Konsonanten- und Atemschutz)", minimum=0.0, maximum=0.5, step=0.01, value=0.33)
-            filter_radius = gr.Slider(label="Filter Radius (F0 Glättung)", minimum=0, maximum=7, step=1, value=3)
-            rms_mix_rate = gr.Slider(label="Clean Audio / Autoclean (RMS Mix Rate)", minimum=0.0, maximum=1.0, step=0.05, value=0.25)
-            hop_length = gr.Dropdown(label="Crepe Hop Length (Zeitliche Präzision)", choices=["16", "32", "64", "128", "256", "512"], value="128", visible=True)
-            studio_preset = gr.Dropdown(label="Studio FX Presets", choices=list(STUDIO_PRESETS.keys()), value="Standard (Manuell)")
+        with gr.Column(scale=1):
+            gr.Markdown("### 1. Inferenz-Setup")
 
-            with gr.Column(elem_classes=["section-gain"]):
-                gr.Markdown("### 01.A / DIGITAL HARDWARE GAIN & NOISE REDUCTION")
-                vocal_gain = gr.Slider(label="Digital Microphone Gain (dB)", minimum=-12, maximum=24, step=0.5, value=0.0)
-                noise_red = gr.Slider(label="Noise Reduction Intensity (%)", minimum=0, maximum=100, step=1, value=0)
-            with gr.Accordion("01.B / STUDIO DYNAMICS (NOISE GATE)", open=False, elem_classes=["section-dynamics"]):
-                gate_threshold = gr.Slider(label="Gate Threshold (dB)", minimum=-60, maximum=0, step=1, value=-50)
-                gate_release = gr.Slider(label="Gate Release (ms)", minimum=10, maximum=1000, step=10, value=150)
-            with gr.Accordion("01.C / STUDIO DYNAMICS (COMPRESSOR)", open=False, elem_classes=["section-dynamics"]):
-                comp_thresh = gr.Slider(label="Compressor Threshold (dB)", minimum=-40, maximum=0, step=1, value=-20)
-                comp_ratio = gr.Slider(label="Compressor Ratio", minimum=1.0, maximum=10.0, step=0.5, value=3.5)
-                comp_attack = gr.Slider(label="Compressor Attack (ms)", minimum=1, maximum=100, step=1, value=15)
-                comp_release = gr.Slider(label="Compressor Release (ms)", minimum=10, maximum=1000, step=10, value=200)
-            with gr.Accordion("01.D / STUDIO PARAMETRIC EQ", open=False, elem_classes=["section-eq"]):
-                eq_low = gr.Slider(label="Low (100 Hz) (dB)", minimum=-12, maximum=12, step=1, value=0)
-                eq_mid = gr.Slider(label="Mid (2.5 kHz) (dB)", minimum=-12, maximum=12, step=1, value=2)
-                eq_high = gr.Slider(label="High (10 kHz) (dB)", minimum=-12, maximum=12, step=1, value=1)
-            with gr.Accordion("01.E / TIME & AMBIENCE FX", open=False, elem_classes=["section-time"]):
-                echo_time = gr.Slider(label="Stereo Delay Time (s)", minimum=0.0, maximum=2.0, step=0.05, value=0.3)
-                echo_feedback = gr.Slider(label="Delay Feedback (%)", minimum=0, maximum=100, step=5, value=30)
-                reverb_size = gr.Slider(label="Reverb Room Size", minimum=0.0, maximum=1.0, step=0.05, value=0.5)
-                fx_mix = gr.Slider(label="FX Wet/Dry Mix (%)", minimum=0, maximum=100, step=5, value=15)
-            convert_btn = gr.Button("Musik umwandeln", variant="primary")
-            local_output_audio = gr.Audio(label="Konvertiertes Audio (Direkt-Player)")
+            input_audio = gr.Audio(
+                label="Audioquelle",
+                type="filepath",
+                value=(
+                    str(ENGINE_DIR / "audio.wav")
+                    if (ENGINE_DIR / "audio.wav").exists()
+                    else None
+                ),
+                interactive=True,
+            )
 
-        with gr.Column():
-            gr.Markdown("## 02 / REALTIME MICROPHONE MATRIX")
-            input_device = gr.Dropdown(label="Audio Eingangsgerät (Mikrofon)", choices=input_devices, value=def_in)
-            output_device = gr.Dropdown(label="Audio Ausgangsgerät (Monitor)", choices=output_devices, value=def_out)
-            live_block_size = gr.Slider(label="Live Buffer Size (Niedriger = Weniger Latenz)", minimum=1024, maximum=8192, step=1024, value=2048)
-            live_vu_meter = gr.Slider(label="Microphone Signal Input Level (dB)", minimum=-60, maximum=0, value=-60, interactive=False)
+            gr.Markdown("#### RVC-Modell (.pth) wählen")
+            setcards_container = gr.HTML(
+                value=generate_setcards_html(models_list, initial_model)
+            )
+            setcard_convert_btn = gr.Button(
+                "⚡ MIT GEWÄHLTER SETCARD UMWANDELN",
+                variant="primary",
+            )
+            model_dropdown = gr.Dropdown(
+                label="Modell (Alternativ-Auswahl)",
+                choices=models_list,
+                value=initial_model if initial_model else None,
+            )
+
+            with gr.Accordion(
+                "⚙️ RVC Kern-Einstellungen & Pitch",
+                open=True,
+            ):
+                vocal_pitch = gr.Slider(
+                    label="Pitch Shift (Tonhöhe)",
+                    minimum=-24,
+                    maximum=24,
+                    step=1,
+                    value=0,
+                )
+                f0_method = gr.Dropdown(
+                    label="F0 Methode (Algorithmus)",
+                    choices=["crepe", "rmvpe", "harvest"],
+                    value="crepe",
+                )
+                index_rate = gr.Slider(
+                    label="Index Rate (Klangtreue)",
+                    minimum=0.0,
+                    maximum=1.0,
+                    value=1.0,
+                )
+                protect = gr.Slider(
+                    label="Protect (Konsonanten-Schutz)",
+                    minimum=0.0,
+                    maximum=0.5,
+                    value=0.33,
+                )
+
+                with gr.Row():
+                    filter_radius = gr.Slider(
+                        label="Glättungsradius",
+                        minimum=0,
+                        maximum=7,
+                        value=3,
+                    )
+                    rms_mix_rate = gr.Slider(
+                        label="Volume Envelope",
+                        minimum=0.0,
+                        maximum=1.0,
+                        value=0.25,
+                    )
+                    hop_length = gr.Dropdown(
+                        label="Hop Length (Nur für Crepe)",
+                        choices=["64", "128", "256"],
+                        value="128",
+                    )
+
+            gr.Markdown("### 🎛️ Studio-Effektkette")
+            studio_preset = gr.Dropdown(
+                label="Effekt Presets (Schnellauswahl)",
+                choices=list(STUDIO_PRESETS),
+                value="Standard (Manuell)",
+            )
+
+            with gr.Accordion(
+                "🎙️ Eingangspegel & Dynamik (Gate/Comp)",
+                open=False,
+            ):
+                vocal_gain = gr.Slider(
+                    label="Mic Gain / Aufholverstärkung (dB)",
+                    minimum=-12,
+                    maximum=24,
+                    value=0.0,
+                )
+                noise_red = gr.Slider(
+                    label="Rauschunterdrückung (%)",
+                    minimum=0,
+                    maximum=100,
+                    value=0,
+                )
+
+                with gr.Group():
+                    gr.Markdown("Noise Gate (Rausch-Sperre)")
+                    gate_threshold = gr.Slider(
+                        label="Gate Thresh (Schwellenwert dB)",
+                        minimum=-60,
+                        maximum=0,
+                        value=-50,
+                    )
+                    gate_release = gr.Slider(
+                        label="Gate Release (Abfallzeit ms)",
+                        minimum=50,
+                        maximum=1000,
+                        value=150,
+                    )
+
+                with gr.Group():
+                    gr.Markdown("Kompressor (Pegelausgleich)")
+                    comp_thresh = gr.Slider(
+                        label="Comp Thresh (Schwellenwert dB)",
+                        minimum=-40,
+                        maximum=0,
+                        value=-20,
+                    )
+                    comp_ratio = gr.Slider(
+                        label="Comp Ratio (Verhältnis)",
+                        minimum=1.0,
+                        maximum=10.0,
+                        value=3.5,
+                    )
+                    comp_attack = gr.Slider(
+                        label="Comp Attack (Ansprechzeit ms)",
+                        minimum=1,
+                        maximum=100,
+                        value=15,
+                    )
+                    comp_release = gr.Slider(
+                        label="Comp Release (Rücklaufzeit ms)",
+                        minimum=10,
+                        maximum=1000,
+                        value=200,
+                    )
+
+            with gr.Accordion(
+                "🎚️ Frequenz-Tuning (3-Band EQ)",
+                open=False,
+            ):
+                eq_low = gr.Slider(
+                    label="Bass-Bereich (EQ Low dB)",
+                    minimum=-12,
+                    maximum=12,
+                    value=0,
+                )
+                eq_mid = gr.Slider(
+                    label="Stimm-Präsenz (EQ Mid dB)",
+                    minimum=-12,
+                    maximum=12,
+                    value=2,
+                )
+                eq_high = gr.Slider(
+                    label="Brillanz / Höhen (EQ High dB)",
+                    minimum=-12,
+                    maximum=12,
+                    value=1,
+                )
+
+            with gr.Accordion(
+                "🌌 Raumklang & Zeiteffekte (Delay/Reverb)",
+                open=False,
+            ):
+                with gr.Group():
+                    gr.Markdown("Echo / Delay")
+                    echo_time = gr.Slider(
+                        label="Delay Time (Verzögerung s)",
+                        minimum=0.0,
+                        maximum=2.0,
+                        value=0.3,
+                    )
+                    echo_feedback = gr.Slider(
+                        label="Delay Feedback (Wiederholungen %)",
+                        minimum=0,
+                        maximum=100,
+                        value=30,
+                    )
+
+                with gr.Group():
+                    gr.Markdown("Hall / Reverb")
+                    reverb_size = gr.Slider(
+                        label="Reverb Room Size (Raumgröße)",
+                        minimum=0.0,
+                        maximum=1.0,
+                        value=0.5,
+                    )
+                    fx_mix = gr.Slider(
+                        label="Gesamter FX-Mixanteil (Wet %)",
+                        minimum=0,
+                        maximum=100,
+                        value=15,
+                    )
+
+        with gr.Column(scale=1):
+            gr.Markdown("### 2. Live-Audio & Aufzeichnung")
+
+            input_device = gr.Dropdown(
+                label="Mikrofon-Eingang",
+                choices=input_devices,
+                value=default_input,
+            )
+            output_device = gr.Dropdown(
+                label="Monitor-Ausgang (für zukünftiges Monitoring)",
+                choices=output_devices,
+                value=default_output,
+            )
+            live_block_size = gr.Slider(
+                label="Buffer-Blockgröße",
+                minimum=1024,
+                maximum=4096,
+                step=1024,
+                value=2048,
+            )
+            live_vu_meter = gr.Slider(
+                label="Eingangspegel (dB)",
+                minimum=-60,
+                maximum=0,
+                value=-60,
+                interactive=False,
+            )
             vu_status_txt = gr.Markdown("OFFLINE")
-            vocal_wave_state = gr.State(value=[0.0] * 50)
-            bgm_wave_state = gr.State(value=[0.0] * 50)
-            live_vu_timer = gr.Timer(value=0.1, active=True)
 
-            with gr.Column(elem_classes=["section-mixer"]):
-                gr.Markdown("### STUDIO TWO-CHANNEL MIXER & DUCKING MATRIX")
-                bgm_file = gr.File(label="Kanal 2: Hintergrundmusik (Instrumental / Beat)", type="filepath")
-                bgm_volume = gr.Slider(label="Music Volume (dB)", minimum=-40, maximum=12, step=1, value=0)
-                ducking_intensity = gr.Slider(label="Sidechain Ducking Intensity (dB reduction)", minimum=0, maximum=30, step=1, value=12)
-            with gr.Accordion("02.B / STUDIO SOUNDBOARD MATRIX", open=False, elem_classes=["section-mixer"]):
-                sb_file_1 = gr.File(label="Soundboard Slot 1 (Tastaturbefehl [1-9])", type="filepath")
-                sb_volume_1 = gr.Slider(label="Slot 1 Lautstärke (dB)", minimum=-30, maximum=12, value=0)
-                sb_pitch_1 = gr.Slider(label="Slot 1 Pitch Shift (Halbtöne)", minimum=-12, maximum=12, value=0, step=0.5)
-                sb_filter_1 = gr.Radio(choices=["Bypass", "High-Pass (Clean)", "Low-Pass (Muffled)"], value="Bypass", label="Slot 1 Filter")
-                sb_play_trigger = gr.Button("Soundboard-Trigger (Hidden)", visible=False, elem_id="sb_play_trigger")
-            with gr.Row():
-                start_live = gr.Button("LIVE MODE START", variant="primary")
-                stop_live = gr.Button("LIVE MODE STOP", variant="stop")
-            gr.Markdown("### STUDIO STREAM RECORDER")
+            bgm_file = gr.File(
+                label="Hintergrundmusik (Beat/Track)",
+                type="filepath",
+            )
+            bgm_volume = gr.Slider(
+                label="Musik Lautstärke (dB)",
+                minimum=-40,
+                maximum=12,
+                value=0,
+            )
+            ducking_intensity = gr.Slider(
+                label="Sidechain Ducking (dB)",
+                minimum=0,
+                maximum=30,
+                value=12,
+            )
+
             with gr.Row():
                 start_rec_btn = gr.Button("REC START", variant="primary")
                 stop_rec_btn = gr.Button("REC STOP", variant="stop")
-            live_preview_audio = gr.Audio(label="Letzte Live-Aufnahme (Vorschau)", interactive=False)
 
-    gr.Markdown("## 03 / HARDWARE MONITORING")
-    status_output = gr.Textbox(label="System-Matrix Status", interactive=False, lines=6, value="ONLINE\nSystem bereit für Inferenz, FX-Mastering oder Live-Streaming.")
-    gr.Markdown("## 04 / MASTER EXPORT ROUTER")
-    export_codec = gr.Radio(choices=["WAV", "MP3", "FLAC", "WMA", "VOB"], value="WAV", label="Ziel-Codec")
-    mp3_bitrate = gr.Slider(label="MP3 Export Bitrate (kbps)", minimum=96, maximum=320, step=32, value=320)
-    sample_rate = gr.Radio(choices=["48000 Hz", "44100 Hz"], value="48000 Hz", label="Studio Samplerate")
-    bounce_btn = gr.Button("Bounce Master", variant="primary")
-    output_audio = gr.Audio(label="Master Ausgabe")
+            live_preview_audio = gr.Audio(
+                label="Live-Aufnahme-Playback",
+                interactive=False,
+            )
+
+            gr.Markdown("### 3. Master Export & Format")
+            export_codec = gr.Radio(
+                ["WAV", "MP3", "FLAC", "WMA"],
+                value="WAV",
+                label="Exportformat",
+            )
+            mp3_bitrate = gr.Slider(
+                label="Bitrate (kbps)",
+                minimum=128,
+                maximum=320,
+                step=32,
+                value=320,
+            )
+            sample_rate = gr.Radio(
+                ["44100 Hz", "48000 Hz"],
+                value="48000 Hz",
+                label="Sample-Rate",
+            )
+
+            bounce_btn = gr.Button(
+                "BOUNCE SKRIPT & MASTER EXPORT",
+                variant="primary",
+            )
+            output_audio = gr.Audio(label="Master-Ausgabedatei")
+            status_output = gr.Textbox(
+                label="System-Log",
+                lines=4,
+                value="System bereit.",
+            )
+
+    # -----------------------------------------------------------------------
+    # Events
+    # -----------------------------------------------------------------------
+
+    def on_model_select(model):
+        if not model:
+            return generate_setcards_html(models_list, None), gr.update()
+
+        return (
+            generate_setcards_html(models_list, model),
+            gr.update(value=model),
+        )
+
+    selected_model_state.change(
+        fn=on_model_select,
+        inputs=[selected_model_state],
+        outputs=[setcards_container, model_dropdown],
+    )
+
+    def on_dropdown_select(model):
+        return model if model else gr.update()
+
+    model_dropdown.change(
+        fn=on_dropdown_select,
+        inputs=[model_dropdown],
+        outputs=[selected_model_state],
+    )
 
     studio_preset.change(
-        fn=load_preset_values, inputs=[studio_preset],
-        outputs=[vocal_gain, noise_red, gate_threshold, gate_release,
-                 comp_thresh, comp_ratio, comp_attack, comp_release,
-                 eq_low, eq_mid, eq_high, echo_time, echo_feedback,
-                 reverb_size, fx_mix],
+        fn=load_preset_values,
+        inputs=[studio_preset],
+        outputs=[
+            vocal_gain,
+            noise_red,
+            gate_threshold,
+            gate_release,
+            comp_thresh,
+            comp_ratio,
+            comp_attack,
+            comp_release,
+            eq_low,
+            eq_mid,
+            eq_high,
+            echo_time,
+            echo_feedback,
+            reverb_size,
+            fx_mix,
+        ],
     )
-    live_vu_timer.tick(fn=update_live_vu, inputs=[], outputs=[live_vu_meter, vu_status_txt, vocal_wave_state, bgm_wave_state])
-    start_rec_btn.click(fn=start_live_recording, inputs=[], outputs=status_output)
-    stop_rec_btn.click(fn=stop_live_recording, inputs=[export_codec, mp3_bitrate], outputs=[live_preview_audio, status_output])
-    f0_method.change(fn=update_hop_visibility, inputs=f0_method, outputs=hop_length)
-    refresh_btn.click(fn=refresh_models, inputs=[], outputs=rvc_model)
-    start_live.click(
-        fn=start_live_mode,
-        inputs=[rvc_model, vocal_pitch, f0_method, index_rate, input_device,
-                output_device, live_block_size, vocal_gain, noise_red,
-                gate_threshold, gate_release, comp_thresh, comp_ratio,
-                comp_attack, comp_release, eq_low, eq_mid, eq_high,
-                echo_time, echo_feedback, reverb_size, fx_mix, bgm_file,
-                bgm_volume, ducking_intensity, sb_file_1, sb_volume_1,
-                sb_pitch_1, sb_filter_1],
+
+    live_vu_timer = gr.Timer(value=0.1, active=True)
+    live_vu_timer.tick(
+        fn=update_live_vu,
+        outputs=[live_vu_meter, vu_status_txt],
+    )
+
+    start_rec_btn.click(
+        fn=start_live_recording,
+        inputs=[input_device, output_device, live_block_size],
         outputs=status_output,
     )
-    stop_live.click(fn=stop_live_mode, inputs=[], outputs=status_output)
+
+    stop_rec_btn.click(
+        fn=stop_live_recording,
+        inputs=[export_codec, mp3_bitrate],
+        outputs=[live_preview_audio, status_output],
+    )
+
     conversion_inputs = [
-        input_audio, rvc_model, vocal_pitch, f0_method, index_rate, protect,
-        filter_radius, rms_mix_rate, hop_length, vocal_gain, noise_red,
-        gate_threshold, gate_release, comp_thresh, comp_ratio, comp_attack,
-        comp_release, eq_low, eq_mid, eq_high, echo_time, echo_feedback,
-        reverb_size, fx_mix, export_codec, sample_rate, mp3_bitrate,
+        input_audio,
+        selected_model_state,
+        vocal_pitch,
+        f0_method,
+        index_rate,
+        protect,
+        filter_radius,
+        rms_mix_rate,
+        hop_length,
+        vocal_gain,
+        noise_red,
+        gate_threshold,
+        gate_release,
+        comp_thresh,
+        comp_ratio,
+        comp_attack,
+        comp_release,
+        eq_low,
+        eq_mid,
+        eq_high,
+        echo_time,
+        echo_feedback,
+        reverb_size,
+        fx_mix,
+        export_codec,
+        sample_rate,
+        mp3_bitrate,
     ]
-    convert_btn.click(fn=process_audio, inputs=conversion_inputs, outputs=[local_output_audio, status_output])
-    bounce_btn.click(fn=process_audio, inputs=conversion_inputs, outputs=[output_audio, status_output])
+
+    bounce_btn.click(
+        fn=process_audio,
+        inputs=conversion_inputs,
+        outputs=[output_audio, status_output],
+        show_progress="full",
+    )
+
+    setcard_convert_btn.click(
+        fn=process_audio,
+        inputs=conversion_inputs,
+        outputs=[output_audio, status_output],
+        show_progress="full",
+    )
 
 
 if __name__ == "__main__":
-    app.launch(server_name="127.0.0.1", server_port=7860, inbrowser=True)
+    demo.launch(
+        server_name="127.0.0.1",
+        server_port=7860,
+        inbrowser=True,
+    )
